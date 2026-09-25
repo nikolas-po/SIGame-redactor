@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Форма вопроса: тип, варианты, модификаторы, предпросмотр."""
+"""Форма вопроса: сначала тип и смысл, потом содержимое."""
 
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
-from constants import QUESTION_TYPES, MEDIA_EXTS, MEDIA_FOLDERS
+from constants import QUESTION_TYPES, MEDIA_EXTS, MEDIA_FOLDERS, TYPE_HELP
 from models import Atom
 
 
 def show_preview(parent, question):
     win = tk.Toplevel(parent)
-    win.title("Предпросмотр вопроса")
+    win.title("Как увидят игроки")
     win.geometry("520x560")
     win.transient(parent)
     txt = tk.Text(win, wrap=tk.WORD, font=("", 11), padx=10, pady=10)
     txt.pack(fill=tk.BOTH, expand=True)
     try:
-        body = question.preview_text().replace("\\n", "\n")
+        body = question.preview_text()
     except Exception:
         body = str(question)
     txt.insert("1.0", body)
@@ -26,52 +26,62 @@ def show_preview(parent, question):
 
 
 def pick_question_type(parent, current="simple"):
-    """Диалог быстрого выбора типа. Возвращает ключ типа или None."""
+    """Выбор типа с объяснением. Возвращает ключ или None."""
     win = tk.Toplevel(parent)
-    win.title("Тип вопроса")
-    win.geometry("360x320")
+    win.title("Тип вопроса — что это?")
+    win.geometry("480x420")
     win.transient(parent)
     win.grab_set()
     result = {"value": None}
 
-    ttk.Label(win, text="Выберите тип вопроса:", font=("", 11, "bold")).pack(
-        anchor="w", padx=12, pady=8
-    )
-    var = tk.StringVar(value=current)
+    ttk.Label(
+        win,
+        text="Сначала выберите тип клетки на табло",
+        font=("", 12, "bold"),
+    ).pack(anchor="w", padx=12, pady=8)
+
+    var = tk.StringVar(value=current or "simple")
+    help_lbl = ttk.Label(win, text="", wraplength=440, justify=tk.LEFT, foreground="#333")
+    help_lbl.pack(anchor="w", padx=12, pady=8, fill=tk.X)
+
+    def refresh(*_):
+        key = var.get()
+        help_lbl.config(text=TYPE_HELP.get(key, "").replace("\\n", "\n"))
+
     for key, label in QUESTION_TYPES:
         ttk.Radiobutton(
-            win, text="%s — %s" % (key, label), variable=var, value=key
+            win,
+            text=label,
+            variable=var,
+            value=key,
+            command=refresh,
         ).pack(anchor="w", padx=20, pady=3)
+
+    refresh()
 
     def ok():
         result["value"] = var.get()
         win.destroy()
 
-    def cancel():
-        win.destroy()
-
     bf = ttk.Frame(win)
     bf.pack(pady=12)
-    ttk.Button(bf, text="OK", command=ok).pack(side=tk.LEFT, padx=6)
-    ttk.Button(bf, text="Отмена", command=cancel).pack(side=tk.LEFT, padx=6)
+    ttk.Button(bf, text="Выбрать этот тип", command=ok).pack(side=tk.LEFT, padx=6)
+    ttk.Button(bf, text="Отмена", command=win.destroy).pack(side=tk.LEFT, padx=6)
     win.wait_window()
     return result["value"]
 
 
 class QuestionFormBuilder:
-    """Строит виджеты формы вопроса внутри parent frame."""
-
     def __init__(self, app, form_frame, question, path):
         self.app = app
         self.form = form_frame
         self.q = question
-        self.path = path  # (ri, ti, qi)
+        self.path = path
         self.widgets = []
         self.vars = {}
         self.listboxes = {}
         self.variant_index = 0
         self.q.ensure_variants()
-        # рабочие копии
         self.variants = [
             {
                 "name": v.get("name", "Вариант"),
@@ -83,57 +93,76 @@ class QuestionFormBuilder:
 
     def build(self):
         q = self.q
-        self._label("Нажмите тип или смените ниже. Двойной клик по вопросу в дереве — быстрый выбор типа.")
-        # --- тип кнопками ---
-        tf = ttk.LabelFrame(self.form, text="Тип вопроса", padding=6)
+
+        # ===== ШАГ 1: ТИП =====
+        tf = ttk.LabelFrame(self.form, text="Шаг 1. Тип клетки — что это за вопрос?", padding=8)
         tf.pack(fill=tk.X, pady=4)
         self.widgets.append(tf)
+
         self.type_var = tk.StringVar(value=q.qtype or "simple")
         row = ttk.Frame(tf)
         row.pack(fill=tk.X)
         for key, label in QUESTION_TYPES:
             ttk.Radiobutton(
-                row, text=label, value=key, variable=self.type_var
+                row, text=label, value=key, variable=self.type_var, command=self._on_type_change
             ).pack(side=tk.LEFT, padx=4)
 
-        self._field("Стоимость", "price", q.price)
+        self.type_help = ttk.Label(
+            tf,
+            text="",
+            wraplength=520,
+            justify=tk.LEFT,
+            foreground="#0d47a1",
+            background="#e3f2fd",
+            padding=8,
+        )
+        self.type_help.pack(fill=tk.X, pady=(8, 4))
+        self.type_frame = tf
+        self._on_type_change()
 
-        # --- модификаторы ---
-        mf = ttk.LabelFrame(self.form, text="Модификаторы", padding=6)
-        mf.pack(fill=tk.X, pady=4)
-        self.widgets.append(mf)
-        self.mod_partial = tk.BooleanVar(value=bool(q.mod_partial))
-        self.mod_no_penalty = tk.BooleanVar(value=bool(q.mod_no_penalty))
-        self.mod_host_choice = tk.BooleanVar(value=bool(q.mod_host_choice))
+        # блок настроек кота (показывается по типу)
+        self.cat_frame = ttk.LabelFrame(self.form, text="Настройки «Кота» (для этого типа)", padding=6)
+        self.widgets.append(self.cat_frame)
+        self._field_in(self.cat_frame, "Секретная тема (сюрприз)", "secret_theme", q.secret_theme or "")
+        self._field_in(self.cat_frame, "Секретная цена (0 = как на табло)", "secret_cost", q.secret_cost or "")
+        self.cat_self = tk.BooleanVar(value=bool(q.cat_self))
         ttk.Checkbutton(
-            mf, text="Можно принять близкий ответ", variable=self.mod_partial
+            self.cat_frame, text="Можно оставить вопрос себе", variable=self.cat_self
         ).pack(anchor="w")
-        ttk.Checkbutton(
-            mf, text="Без штрафа за неверный ответ", variable=self.mod_no_penalty
-        ).pack(anchor="w")
-        ttk.Checkbutton(
-            mf,
-            text="Ведущий выбирает вариант показа (текст/аудио/…)",
-            variable=self.mod_host_choice,
-        ).pack(anchor="w")
-        tr = ttk.Frame(mf)
-        tr.pack(fill=tk.X, pady=2)
-        ttk.Label(tr, text="Таймер (сек, 0=обычный):").pack(side=tk.LEFT)
-        self.timer_var = tk.StringVar(value=str(q.mod_timer_sec or 0))
-        ttk.Entry(tr, textvariable=self.timer_var, width=8).pack(side=tk.LEFT, padx=6)
-        self._field("Заметка модификатора", "mod_note", q.mod_note or "")
+        self._combo_in(
+            self.cat_frame,
+            "Когда игроки узнают тему",
+            "cat_knows",
+            {"before": "before — до передачи", "after": "after — после", "never": "never — никогда"}.get(
+                q.cat_knows, "before — до передачи"
+            ),
+            ["before — до передачи", "after — после", "never — никогда"],
+        )
+        self._sync_cat_visibility()
 
-        # --- варианты ---
+        # ===== ШАГ 2: ЦЕНА =====
+        pf = ttk.LabelFrame(self.form, text="Шаг 2. Цена на табло", padding=6)
+        pf.pack(fill=tk.X, pady=4)
+        self.widgets.append(pf)
+        self._field_in(pf, "Очки за клетку", "price", q.price)
+
+        # ===== ШАГ 3: СОДЕРЖИМОЕ =====
         vf = ttk.LabelFrame(
             self.form,
-            text="Варианты показа (например: Текст и Аудио — на выбор)",
+            text="Шаг 3. Сам вопрос — что увидят или услышат игроки",
             padding=6,
         )
         vf.pack(fill=tk.X, pady=4)
         self.widgets.append(vf)
 
+        ttk.Label(
+            vf,
+            text="Можно один вариант (просто текст) или несколько (текст / аудио / фото).",
+            foreground="#555",
+        ).pack(anchor="w")
+
         topv = ttk.Frame(vf)
-        topv.pack(fill=tk.X)
+        topv.pack(fill=tk.X, pady=4)
         self.variant_list = tk.Listbox(topv, height=3, exportselection=False)
         self.variant_list.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._refresh_variant_list()
@@ -145,7 +174,7 @@ class QuestionFormBuilder:
         ttk.Button(vb, text="Имя", command=self._rename_variant).pack(fill=tk.X, pady=1)
         ttk.Button(vb, text="Удалить", command=self._del_variant).pack(fill=tk.X, pady=1)
 
-        self.atom_frame = ttk.LabelFrame(vf, text="Содержимое варианта", padding=4)
+        self.atom_frame = ttk.LabelFrame(vf, text="Содержимое выбранного варианта", padding=4)
         self.atom_frame.pack(fill=tk.X, pady=4)
         self.atom_listbox = tk.Listbox(self.atom_frame, height=5)
         self.atom_listbox.pack(fill=tk.X)
@@ -165,68 +194,81 @@ class QuestionFormBuilder:
             ttk.Button(ab, text=txt, command=cmd).pack(side=tk.LEFT, padx=1)
         self._load_atoms_for_variant()
 
-        # ответ
+        # ===== ШАГ 4: ОТВЕТ =====
+        af = ttk.LabelFrame(self.form, text="Шаг 4. Правильный ответ", padding=6)
+        af.pack(fill=tk.X, pady=4)
+        self.widgets.append(af)
+        self._list_editor_in(af, "Что засчитывать как верно", "answers", q.answers or [""])
+        self._list_editor_in(af, "Явно неверные (необязательно)", "wrong", q.wrong or [])
         self._atom_block_answer()
-        self._list_editor("Правильные ответы", "answers", q.answers or [""])
-        self._list_editor("Неправильные", "wrong", q.wrong or [])
-        self._field("Комментарий ведущему", "comment", q.comment or "", multi=True)
-        self._field("Секретная тема (кот)", "secret_theme", q.secret_theme or "")
-        self._field("Секретная стоимость", "secret_cost", q.secret_cost or "")
-        self.cat_self = tk.BooleanVar(value=bool(q.cat_self))
-        cat_row = ttk.Frame(self.form)
-        cat_row.pack(fill=tk.X, anchor="w")
-        ttk.Checkbutton(
-            cat_row, text="Кот: можно взять себе", variable=self.cat_self
-        ).pack(anchor="w")
-        self.widgets.append(cat_row)
-        self._combo(
-            "Кот: когда видна тема",
-            "cat_knows",
-            {"before": "before — до передачи", "after": "after — после", "never": "never — никогда"}.get(
-                q.cat_knows, "before — до передачи"
-            ),
-            ["before — до передачи", "after — после", "never — никогда"],
+
+        # ===== ДОПОЛНИТЕЛЬНО =====
+        mf = ttk.LabelFrame(
+            self.form, text="По желанию — заметки ведущему", padding=6
         )
+        mf.pack(fill=tk.X, pady=4)
+        self.widgets.append(mf)
+        self.mod_partial = tk.BooleanVar(value=bool(q.mod_partial))
+        self.mod_no_penalty = tk.BooleanVar(value=bool(q.mod_no_penalty))
+        self.mod_host_choice = tk.BooleanVar(value=bool(q.mod_host_choice))
+        ttk.Checkbutton(mf, text="Можно принять близкий ответ", variable=self.mod_partial).pack(anchor="w")
+        ttk.Checkbutton(mf, text="Без штрафа за ошибку", variable=self.mod_no_penalty).pack(anchor="w")
+        ttk.Checkbutton(
+            mf, text="Ведущий сам выберет вариант показа", variable=self.mod_host_choice
+        ).pack(anchor="w")
+        tr = ttk.Frame(mf)
+        tr.pack(fill=tk.X, pady=2)
+        ttk.Label(tr, text="Таймер (сек, 0 = обычный):").pack(side=tk.LEFT)
+        self.timer_var = tk.StringVar(value=str(q.mod_timer_sec or 0))
+        ttk.Entry(tr, textvariable=self.timer_var, width=8).pack(side=tk.LEFT, padx=6)
+        self._field_in(mf, "Короткая заметка", "mod_note", q.mod_note or "")
+        self._field_in(mf, "Комментарий ведущему", "comment", q.comment or "", multi=True)
 
         bf = ttk.Frame(self.form)
         bf.pack(fill=tk.X, pady=10)
         self.widgets.append(bf)
-        ttk.Button(bf, text="Предпросмотр", command=self._preview).pack(
-            side=tk.LEFT, padx=4
-        )
-        ttk.Button(bf, text="Применить изменения", command=self._apply).pack(
-            side=tk.LEFT, padx=4
-        )
+        ttk.Button(bf, text="Как увидят игроки", command=self._preview).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="Сохранить вопрос", command=self._apply).pack(side=tk.LEFT, padx=4)
+
+    def _on_type_change(self):
+        key = self.type_var.get()
+        text = TYPE_HELP.get(key, "").replace("\\n", "\n")
+        self.type_help.config(text=text)
+        self._sync_cat_visibility()
+
+    def _sync_cat_visibility(self):
+        key = self.type_var.get()
+        if key in ("cat", "bagcat"):
+            self.cat_frame.pack(fill=tk.X, pady=4, after=self.type_frame)
+        else:
+            self.cat_frame.pack_forget()
 
     def _label(self, text):
         w = ttk.Label(self.form, text=text, foreground="#555", wraplength=520)
         w.pack(anchor="w")
         self.widgets.append(w)
 
-    def _field(self, label, key, value, multi=False):
-        row = ttk.Frame(self.form)
+    def _field_in(self, parent, label, key, value, multi=False):
+        row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text=label, width=22).pack(side=tk.LEFT, anchor="n")
+        ttk.Label(row, text=label, width=28).pack(side=tk.LEFT, anchor="n")
         if multi:
-            w = tk.Text(row, height=3, width=42, wrap=tk.WORD)
+            w = tk.Text(row, height=3, width=40, wrap=tk.WORD)
             w.insert("1.0", value or "")
             w.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.vars[key] = w
         else:
             var = tk.StringVar(value=str(value if value is not None else ""))
-            w = ttk.Entry(row, textvariable=var, width=42)
-            w.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Entry(row, textvariable=var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
             self.vars[key] = var
-            self.widgets.append(row)
-            return
-        self.vars[key] = w
         self.widgets.append(row)
 
-    def _combo(self, label, key, value, choices):
-        row = ttk.Frame(self.form)
+    def _combo_in(self, parent, label, key, value, choices):
+        row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text=label, width=22).pack(side=tk.LEFT)
+        ttk.Label(row, text=label, width=28).pack(side=tk.LEFT)
         var = tk.StringVar(value=value)
-        ttk.Combobox(row, textvariable=var, values=choices, width=36, state="readonly").pack(
+        ttk.Combobox(row, textvariable=var, values=choices, width=34, state="readonly").pack(
             side=tk.LEFT
         )
         self.vars[key] = var
@@ -240,8 +282,8 @@ class QuestionFormBuilder:
             return v.get().strip()
         return ""
 
-    def _list_editor(self, title, key, items):
-        frame = ttk.LabelFrame(self.form, text=title, padding=4)
+    def _list_editor_in(self, parent, title, key, items):
+        frame = ttk.LabelFrame(parent, text=title, padding=4)
         frame.pack(fill=tk.X, pady=4)
         self.widgets.append(frame)
         lb = tk.Listbox(frame, height=3)
@@ -309,7 +351,7 @@ class QuestionFormBuilder:
 
     def _add_variant(self):
         name = simpledialog.askstring(
-            "Вариант", "Название (например: Текст, Аудио, Фото):", parent=self.app
+            "Вариант", "Название (Текст, Аудио, Фото):", parent=self.app
         )
         if not name:
             return
@@ -324,7 +366,7 @@ class QuestionFormBuilder:
             return
         cur = self.variants[self.variant_index]
         name = simpledialog.askstring(
-            "Имя", "Название варианта:", initialvalue=cur.get("name", ""), parent=self.app
+            "Имя", "Название:", initialvalue=cur.get("name", ""), parent=self.app
         )
         if name:
             cur["name"] = name.strip()
@@ -418,7 +460,7 @@ class QuestionFormBuilder:
             self.atom_listbox.selection_set(j)
 
     def _atom_block_answer(self):
-        frame = ttk.LabelFrame(self.form, text="В ответе (после правильного)", padding=4)
+        frame = ttk.LabelFrame(self.form, text="После ответа можно показать картинку/звук", padding=4)
         frame.pack(fill=tk.X, pady=4)
         self.widgets.append(frame)
         self.ans_lb = tk.Listbox(frame, height=3)
@@ -466,7 +508,6 @@ class QuestionFormBuilder:
             ttk.Button(bf, text=t, command=c).pack(side=tk.LEFT, padx=1)
 
     def _preview(self):
-        # временный объект для превью
         from models import Question
 
         tmp = Question()
@@ -511,4 +552,4 @@ class QuestionFormBuilder:
         self._fill_question(q)
         self.app._mark_dirty()
         self.app._refresh_tree(("question", ri, ti, qi))
-        self.app.status.config(text="Вопрос сохранён (варианты и модификаторы)")
+        self.app.status.config(text="Вопрос сохранён")

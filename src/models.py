@@ -3,6 +3,14 @@
 import uuid
 from datetime import date
 
+try:
+    from constants import DEFAULT_PACKAGE_NAME, DEFAULT_LANGUAGE, DEFAULT_RESTRICTION, DEFAULT_DIFFICULTY
+except Exception:
+    DEFAULT_PACKAGE_NAME = "Мой набор вопросов"
+    DEFAULT_LANGUAGE = "ru-RU"
+    DEFAULT_RESTRICTION = "16+"
+    DEFAULT_DIFFICULTY = 5
+
 
 class Atom:
     def __init__(self, atype="text", value="", duration=0):
@@ -167,11 +175,11 @@ class Round:
 
 class Package:
     def __init__(self):
-        self.name = "Мой набор вопросов"
+        self.name = DEFAULT_PACKAGE_NAME
         self.date = date.today().strftime("%d.%m.%Y")
-        self.difficulty = 4
-        self.restriction = "12+"
-        self.language = "ru-RU"
+        self.difficulty = DEFAULT_DIFFICULTY
+        self.restriction = DEFAULT_RESTRICTION
+        self.language = DEFAULT_LANGUAGE
         self.author = ""
         self.publisher = ""
         self.comments = ""

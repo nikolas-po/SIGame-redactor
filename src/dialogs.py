@@ -17,106 +17,128 @@ from siq_io import user_data_dir
 def show_beginner_guide(parent):
     win = tk.Toplevel(parent)
     win.title("Как начать")
-    win.geometry("560x520")
+    win.geometry("520x480")
     win.transient(parent)
-    txt = tk.Text(win, wrap=tk.WORD, font=("", 11), padx=12, pady=12)
+    txt = tk.Text(win, wrap=tk.WORD, font=("", 12), padx=14, pady=12)
     txt.pack(fill=tk.BOTH, expand=True)
     txt.insert(
         "1.0",
-        "ЧТО ЭТО\n"
-        "Вы собираете набор вопросов (пакет). Потом открываете его "
-        "в игре «Своя игра» на сайте и играете с друзьями.\n\n"
-        "ТРИ СЛОВА\n"
-        "• Раунд — часть игры\n"
-        "• Тема — столбец на табло\n"
-        "• Вопрос — текст и ответ\n\n"
-        "ПОШАГОВО\n"
-        "1. «+ Раунд» → название → ОК\n"
-        "2. «+ Тема» → например «Деньги»\n"
-        "3. «+ Вопрос»\n"
-        "4. Слева выберите вопрос\n"
-        "5. Справа введите текст и ответ\n"
-        "6. «Применить изменения»\n"
-        "7. «Сохранить» → файл .siq\n"
-        "8. «Играть на сайте» → загрузить пакет\n\n"
-        "ДРУЗЬЯ В КОМНАТУ\n"
-        "1. Создайте комнату на сайте, скопируйте ссылку\n"
-        "2. «QR комнаты» → вставьте ссылку → «Сделать QR»\n"
-        "3. Покажите картинку — вход по камере телефона\n\n"
-        "ВО ВРЕМЯ ИГРЫ\n"
-        "Кнопка «Подсказки ведущему» — шпаргалка рядом с игрой.\n",
+        "СиПак — редактор вопросов для «Своей игры»\n\n"
+        "Три шага\n\n"
+        "1. Слева нажмите «Раунд», потом «Тему», потом «Вопрос».\n"
+        "   Так собирается табло: раунды → темы → цены.\n\n"
+        "2. Справа впишите текст вопроса и правильный ответ.\n"
+        "   Нажмите «Сохранить вопрос».\n"
+        "   Фото, звук, аукцион и «кот» — по желанию, ниже на форме.\n\n"
+        "3. «Сохранить» — получится файл .siq.\n"
+        "   «Играть» — откроется сайт SIGame, загрузите этот файл.\n"
+        "   «Игра → QR для игроков» — код, чтобы друзья вошли в комнату.\n\n"
+        "Не обязательно заполнять всё сразу.\n"
+        "Можно открыть готовый .siq и только подправить вопросы.\n\n"
+        "Если что-то неясно — меню «Помощь» → «Справка».",
     )
     txt.config(state=tk.DISABLED)
-    ttk.Button(win, text="Понятно", command=win.destroy).pack(pady=8)
+    ttk.Button(win, text="Понятно, закрыть", command=win.destroy).pack(pady=10)
+
 
 
 def make_room_qr(parent, status_callback=None):
-    """QR на компьютере, без интернета. Не блокирует окно."""
+    """QR на компьютере. Ссылка + опционально PIN."""
     import threading
     from qr_local import make_qr_png
 
     win = tk.Toplevel(parent)
     win.title("QR-код комнаты")
-    win.geometry("440x520")
+    win.geometry("460x580")
     win.transient(parent)
 
     ttk.Label(
         win,
-        text="1. На сайте SIGame создайте комнату\n"
-        "2. Скопируйте ссылку приглашения (кнопка «ссылка» / «пригласить»)\n"
-        "3. Вставьте её сюда → «Сделать QR»\n\n"
-        "QR только кодирует ссылку — в комнату пускает сайт SIGame.\n"
-        "Если при создании комнаты вы поставили пароль или ПИН —\n"
-        "игрокам нужно сказать его отдельно (в QR пароль сам не попадёт).\n"
-        "Без пароля достаточно отсканировать QR и ввести ник.",
+        text="1. Создайте комнату на сайте SIGame\n"
+        "2. Скопируйте ссылку для игроков\n"
+        "3. Если есть PIN — вставьте ниже\n"
+        "4. «Сделать QR» (всё на этом ПК, без интернета)",
         justify=tk.LEFT,
     ).pack(anchor="w", padx=12, pady=8)
 
+    ttk.Label(win, text="Ссылка на комнату:").pack(anchor="w", padx=12)
     url_var = tk.StringVar()
-    ent = ttk.Entry(win, textvariable=url_var, width=52)
+    ent = ttk.Entry(win, textvariable=url_var, width=54)
     ent.pack(padx=12, fill=tk.X)
     ent.focus_set()
 
+    ttk.Label(win, text="PIN-код (необязательно):").pack(anchor="w", padx=12, pady=(8, 0))
+    pin_var = tk.StringVar()
+    ttk.Entry(win, textvariable=pin_var, width=20).pack(anchor="w", padx=12)
+
+    ttk.Label(
+        win,
+        text="SIGame часто принимает вход по ссылке ИЛИ по PIN отдельно.\n"
+        "Мы добавим pin в URL (на всякий случай) и подпишем код под QR.",
+        foreground="#555",
+        wraplength=420,
+        justify=tk.LEFT,
+    ).pack(anchor="w", padx=12, pady=6)
+
     status_lbl = ttk.Label(win, text="", foreground="#333")
-    status_lbl.pack(anchor="w", padx=12, pady=4)
+    status_lbl.pack(anchor="w", padx=12, pady=2)
 
     img_label = ttk.Label(win)
-    img_label.pack(pady=8)
+    img_label.pack(pady=6)
     path_var = tk.StringVar(value="")
-    ttk.Label(win, textvariable=path_var, wraplength=400).pack(padx=12)
+    ttk.Label(win, textvariable=path_var, wraplength=420).pack(padx=12)
+    pin_hint = ttk.Label(win, text="", font=("", 12, "bold"), foreground="#0d47a1")
+    pin_hint.pack(pady=4)
 
     state = {"busy": False, "photo": None}
 
     def set_status(msg):
         status_lbl.config(text=msg)
 
+    def build_qr_payload(url, pin):
+        """Ссылка для QR: пробуем вшить pin в query; текст под QR — сам PIN."""
+        url = (url or "").strip()
+        pin = "".join(c for c in (pin or "").strip() if c.isalnum())
+        if not pin:
+            return url, ""
+        # не дублируем, если pin уже в ссылке
+        low = url.lower()
+        if "pin=" + pin.lower() in low or "password=" + pin.lower() in low:
+            return url, pin
+        sep = "&" if ("?" in url) else "?"
+        # распространённые имена параметра; клиент SIGame может игнорировать —
+        # тогда поможет подпись под QR
+        enriched = url + sep + "pin=" + urllib.parse.quote(pin)
+        return enriched, pin
+
     def show_image(path):
         if path.lower().endswith(".svg"):
             img_label.configure(
                 image="",
-                text="QR сохранён как SVG:\n" + path + "\nОткройте файл двойным кликом.",
+                text="QR сохранён как SVG:\n" + path,
             )
             return
         try:
             from PIL import Image, ImageTk
 
             im = Image.open(path)
-            im.thumbnail((280, 280))
+            im.thumbnail((260, 260))
             photo = ImageTk.PhotoImage(im)
             state["photo"] = photo
             img_label.configure(image=photo, text="")
         except Exception:
-            img_label.configure(
-                image="",
-                text="QR сохранён.\nОткройте файл:\n" + path,
-            )
+            img_label.configure(image="", text="QR сохранён:\n" + path)
 
-    def finish_ok(out_path):
+    def finish_ok(out_path, pin):
         state["busy"] = False
         btn_gen.config(state=tk.NORMAL)
-        set_status("Готово — QR на вашем компьютере.")
+        set_status("Готово.")
         path_var.set(out_path)
         show_image(out_path)
+        if pin:
+            pin_hint.config(text="PIN для входа: %s" % pin)
+        else:
+            pin_hint.config(text="")
         if status_callback:
             try:
                 status_callback("QR: " + out_path)
@@ -129,17 +151,30 @@ def make_room_qr(parent, status_callback=None):
         set_status("Ошибка")
         messagebox.showerror(
             "QR",
-            "Не удалось создать QR на компьютере.\n\n%s\n\n"
+            "Не удалось создать QR.\n\n%s\n\n"
             "Установите:\n  pip install qrcode pillow" % err,
             parent=win,
         )
 
-    def worker(url):
+    def worker(url, pin):
         try:
+            payload, pin_clean = build_qr_payload(url, pin)
             out_dir = user_data_dir()
             out_path = os.path.join(out_dir, "qr_komnata.png")
-            result = make_qr_png(url, out_path)
-            win.after(0, lambda: finish_ok(result))
+            result = make_qr_png(payload, out_path)
+            # рядом текстовая шпаргалка
+            try:
+                tip = os.path.join(out_dir, "qr_komnata.txt")
+                with open(tip, "w", encoding="utf-8") as f:
+                    f.write("Ссылка: %s\n" % payload)
+                    if pin_clean:
+                        f.write("PIN: %s\n" % pin_clean)
+                        f.write(
+                            "\nЕсли сайт не подставил PIN сам — введите его вручную.\n"
+                        )
+            except Exception:
+                pass
+            win.after(0, lambda: finish_ok(result, pin_clean))
         except Exception as e:
             win.after(0, lambda: finish_fail(str(e)))
 
@@ -147,6 +182,7 @@ def make_room_qr(parent, status_callback=None):
         if state["busy"]:
             return
         url = (url_var.get() or "").strip()
+        pin = (pin_var.get() or "").strip()
         if not url:
             messagebox.showinfo("QR", "Вставьте ссылку на комнату.", parent=win)
             return
@@ -159,10 +195,11 @@ def make_room_qr(parent, status_callback=None):
             return
         state["busy"] = True
         btn_gen.config(state=tk.DISABLED)
-        set_status("Создаю QR на компьютере…")
+        set_status("Создаю QR…")
         img_label.configure(image="", text="")
         path_var.set("")
-        threading.Thread(target=worker, args=(url,), daemon=True).start()
+        pin_hint.config(text="")
+        threading.Thread(target=worker, args=(url, pin), daemon=True).start()
 
     def open_folder():
         folder = user_data_dir()
@@ -265,7 +302,7 @@ def show_about(parent):
 def soft_welcome(parent, open_guide):
     if messagebox.askyesno(
         "Добро пожаловать",
-        "Первый раз?\n\n«Да» — короткая инструкция.\n«Нет» — сразу к работе.",
+        "Первый раз здесь?\n\nДа — покажем 3 простых шага.\nНет — сразу к редактору.",
         parent=parent,
     ):
         open_guide()
@@ -302,7 +339,7 @@ def check_for_updates(parent, project_dir=None):
 
         repo = (UPDATE_GITHUB_REPO or "").strip()
         if not repo:
-            log("В constants.py не задан UPDATE_GITHUB_REPO (вид: user/repo).")
+            log("В .env не задан UPDATE_GITHUB_REPO (вид: user/repo).")
             log("Пока репозиторий не указан — автопроверка при запуске отключена.")
             log("Пробую git…")
         info = None
@@ -335,7 +372,7 @@ def check_for_updates(parent, project_dir=None):
                 state["info"] = g
             else:
                 log("Нет .git и не задан GitHub-репозиторий.")
-                log("Укажите UPDATE_GITHUB_REPO в constants.py после публикации релизов.")
+                log("Укажите UPDATE_GITHUB_REPO в файле .env после публикации релизов.")
         else:
             log("Папка проекта не найдена.")
 
@@ -399,6 +436,13 @@ def startup_auto_update(parent):
     import threading
     from tkinter import messagebox
     import updater
+    try:
+        from env_load import load_env
+        load_env()
+        from constants import _reload_env_values
+        _reload_env_values()
+    except Exception:
+        pass
     from constants import UPDATE_GITHUB_REPO
 
     repo = (UPDATE_GITHUB_REPO or "").strip()
@@ -464,3 +508,16 @@ def startup_auto_update(parent):
     threading.Thread(target=work, daemon=True).start()
 
 
+def show_sigame_lore(parent):
+    """Что такое Своя игра — простыми словами."""
+    from constants import SIGAME_LORE
+
+    win = tk.Toplevel(parent)
+    win.title("Что такое «Своя игра»")
+    win.geometry("540x560")
+    win.transient(parent)
+    txt = tk.Text(win, wrap=tk.WORD, font=("", 12), padx=14, pady=12)
+    txt.pack(fill=tk.BOTH, expand=True)
+    txt.insert("1.0", SIGAME_LORE)
+    txt.config(state=tk.DISABLED)
+    ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=8)

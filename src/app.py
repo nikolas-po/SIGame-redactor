@@ -8,6 +8,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
 from constants import (
+    APP_NAME,
+    APP_NAME_FULL,
+
     SIGAME_ONLINE_URL,
     QUESTION_TYPES,
     MEDIA_FOLDERS,
@@ -27,10 +30,11 @@ import question_ui
 class SIQEditor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("СиПак — редактор пакетов SIGame")
+        self.title(APP_NAME_FULL)
         self.geometry("1200x750")
         try:
-            icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo_sipak_64.png")
+            from utils import asset_path
+            icon = str(asset_path("logo_sipak_64.png"))
             if os.path.isfile(icon):
                 self._icon_img = tk.PhotoImage(file=icon)
                 self.iconphoto(True, self._icon_img)
@@ -57,34 +61,75 @@ class SIQEditor(tk.Tk):
 
     def _new_defaults(self):
         self.pkg = Package()
-        self.pkg.name = "Экономика и финансы для студентов"
-        self.pkg.comments = "Вопросы с медиа"
+        self.pkg.name = "Моя игра"
+        self.pkg.comments = ""
         self.pkg.date = date.today().strftime("%d.%m.%Y")
         self.current_file = None
 
     def _build_ui(self):
-        top = ttk.Frame(self, padding=6)
+        # ----- меню (второстепенное) -----
+        menubar = tk.Menu(self)
+        m_file = tk.Menu(menubar, tearoff=0)
+        m_file.add_command(label="Новый пакет", command=self.new_package)
+        m_file.add_command(label="Открыть…", command=self.open_package)
+        m_file.add_command(label="Сохранить", command=self.save_package)
+        m_file.add_command(label="Сохранить как…", command=self.save_package_as)
+        m_file.add_separator()
+        m_file.add_command(label="Выход", command=self._on_close)
+        menubar.add_cascade(label="Файл", menu=m_file)
+
+        m_play = tk.Menu(menubar, tearoff=0)
+        m_play.add_command(label="Играть на сайте", command=self.play_online)
+        m_play.add_command(label="QR для игроков", command=self.make_room_qr)
+        m_play.add_command(label="Шпаргалка ведущего", command=self.show_host_hints)
+        menubar.add_cascade(label="Игра", menu=m_play)
+
+        m_help = tk.Menu(menubar, tearoff=0)
+        m_help.add_command(label="Как начать (3 шага)", command=self.show_beginner_guide)
+        m_help.add_command(label="Что такое «Своя игра»?", command=self.show_sigame_lore)
+        m_help.add_command(label="Справка", command=self.show_help)
+        m_help.add_command(label="Обновления", command=self.check_updates)
+        m_help.add_separator()
+        m_help.add_command(label="О программе", command=self.show_about)
+        menubar.add_cascade(label="Помощь", menu=m_help)
+        self.config(menu=menubar)
+
+        # ----- главные кнопки (мало и крупно) -----
+        top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill=tk.X)
+        ttk.Label(top, text="СиПак", font=("", 14, "bold")).pack(side=tk.LEFT, padx=(0, 12))
         for text, cmd in [
-            ("Как начать?", self.show_beginner_guide),
-            ("Предпросмотр", self.preview_selected),
-            ("Справка", self.show_help),
-            ("Обновления", self.check_updates),
             ("Открыть", self.open_package),
             ("Сохранить", self.save_package),
-            ("Новый", self.new_package),
+            ("Играть", self.play_online),
         ]:
-            ttk.Button(top, text=text, command=cmd).pack(side=tk.LEFT, padx=3)
-        ttk.Button(top, text="QR комнаты", command=self.make_room_qr).pack(side=tk.RIGHT, padx=3)
-        ttk.Button(top, text="Подсказки ведущему", command=self.show_host_hints).pack(side=tk.RIGHT, padx=3)
-        ttk.Button(top, text="Играть на сайте", command=self.play_online).pack(side=tk.RIGHT, padx=3)
+            ttk.Button(top, text=text, command=cmd).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Как начать?", command=self.show_beginner_guide).pack(
+            side=tk.RIGHT, padx=4
+        )
+
+        # подсказка-строка
+        self.guide_bar = ttk.Label(
+            self,
+            text="Шаги: 1) Добавьте раунд и тему слева → 2) Вопросы → 3) Сохраните → 4) Играть",
+            padding=(12, 4),
+            background="#e3f2fd",
+            foreground="#0d47a1",
+        )
+        self.guide_bar.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         main = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
-        left = ttk.Frame(main, padding=4)
+        # ----- слева: дерево -----
+        left = ttk.Frame(main, padding=6)
         main.add(left, weight=1)
-        ttk.Label(left, text="Структура пакета", font=("", 10, "bold")).pack(anchor="w")
+        ttk.Label(left, text="Содержание игры", font=("", 11, "bold")).pack(anchor="w")
+        ttk.Label(
+            left,
+            text="Раунд → тема → вопросы (как в телеигре)",
+            foreground="#555",
+        ).pack(anchor="w", pady=(0, 4))
 
         tree_frame = ttk.Frame(left)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -96,145 +141,74 @@ class SIQEditor(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
         self.tree.bind("<Double-1>", self.on_tree_double)
 
-        bf = ttk.LabelFrame(left, text="Добавить / порядок", padding=4)
-        bf.pack(fill=tk.X, pady=6)
-        row1 = ttk.Frame(bf)
-        row1.pack(fill=tk.X)
-        ttk.Button(row1, text="+ Раунд", command=self.add_round).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        ttk.Button(row1, text="+ Тема", command=self.add_theme).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        ttk.Button(row1, text="+ Вопрос", command=self.add_question).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        row2 = ttk.Frame(bf)
-        row2.pack(fill=tk.X, pady=3)
-        ttk.Button(row2, text="Вверх", command=self.move_up).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        ttk.Button(row2, text="Вниз", command=self.move_down).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        ttk.Button(row2, text="Копия", command=self.duplicate).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        ttk.Button(row2, text="Удалить", command=self.delete_selected).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+        bf = ttk.LabelFrame(left, text="Добавить", padding=6)
+        bf.pack(fill=tk.X, pady=(8, 4))
+        row = ttk.Frame(bf)
+        row.pack(fill=tk.X)
+        for text, cmd in [
+            ("Раунд", self.add_round),
+            ("Тему", self.add_theme),
+            ("Вопрос", self.add_question),
+        ]:
+            ttk.Button(row, text=text, command=cmd).pack(side=tk.LEFT, padx=3, expand=True, fill=tk.X)
 
-        right = ttk.Frame(main, padding=4)
-        main.add(right, weight=2)
-        self.editor_title = ttk.Label(right, text="Выберите элемент слева", font=("", 11, "bold"))
-        self.editor_title.pack(anchor="w")
-        self.hint_label = ttk.Label(right, text="", foreground="#555", wraplength=540)
-        self.hint_label.pack(anchor="w", pady=(0, 4))
+        row2 = ttk.Frame(left)
+        row2.pack(fill=tk.X, pady=2)
+        for text, cmd in [
+            ("↑", lambda: self._move(-1)),
+            ("↓", lambda: self._move(1)),
+            ("Копия", self.duplicate),
+            ("Удалить", self.delete_selected),
+        ]:
+            ttk.Button(row2, text=text, command=cmd, width=8).pack(side=tk.LEFT, padx=2)
 
-        canvas = tk.Canvas(right, highlightthickness=0)
-        form_scroll = ttk.Scrollbar(right, orient="vertical", command=canvas.yview)
-        self.form_frame = ttk.Frame(canvas)
-        self.form_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.form_frame, anchor="nw")
-        canvas.configure(yscrollcommand=form_scroll.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        form_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self._canvas = canvas
-
-        self.status = ttk.Label(self, text="Готово", relief=tk.SUNKEN, anchor="w", padding=3)
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
-
-        menubar = tk.Menu(self)
-        fm = tk.Menu(menubar, tearoff=0)
-        fm.add_command(label="Новый", command=self.new_package)
-        fm.add_command(label="Открыть", command=self.open_package)
-        fm.add_command(label="Сохранить", command=self.save_package)
-        fm.add_command(label="Сохранить как", command=self.save_package_as)
-        fm.add_separator()
-        fm.add_command(label="Играть на сайте", command=self.play_online)
-        fm.add_separator()
-        fm.add_command(label="Выход", command=self.quit)
-        menubar.add_cascade(label="Файл", menu=fm)
-        hm = tk.Menu(menubar, tearoff=0)
-        hm.add_command(label="Справка", command=self.show_help)
-        hm.add_command(label="О программе", command=self.show_about)
-        menubar.add_cascade(label="Помощь", menu=hm)
-        self.config(menu=menubar)
-
-    # ---------- Дерево ----------
-
-    def _refresh_tree(self, select_path=None):
-        self.tree.delete(*self.tree.get_children())
-        pkg_id = self.tree.insert("", "end", text="  " + self.pkg.name, open=True, tags=("package",))
-        for ri, rnd in enumerate(self.pkg.rounds):
-            fin = " [ФИНАЛ]" if rnd.is_final else ""
-            r_id = self.tree.insert(pkg_id, "end", text="  " + rnd.name + fin, open=True, tags=("round:%d" % ri,))
-            for ti, theme in enumerate(rnd.themes):
-                t_id = self.tree.insert(
-                    r_id, "end",
-                    text="  %s (%d)" % (theme.name, len(theme.questions)),
-                    open=True, tags=("theme:%d:%d" % (ri, ti),),
-                )
-                for qi, q in enumerate(theme.questions):
-                    media_mark = ""
-                    all_a = list(q.answer_atoms or [])
-                    if getattr(q, "variants", None):
-                        for v in q.variants:
-                            all_a.extend(v.get("atoms") or [])
-                    else:
-                        all_a.extend(q.atoms or [])
-                    types_in = {a.atype for a in all_a}
-                    if "image" in types_in:
-                        media_mark += "Ф"
-                    if "voice" in types_in:
-                        media_mark += "З"
-                    if "video" in types_in:
-                        media_mark += "В"
-                    if getattr(q, "variants", None) and len(q.variants) > 1:
-                        media_mark += "×%d" % len(q.variants)
-                    if media_mark:
-                        media_mark = "[" + media_mark + "] "
-                    short = ""
-                    for a in q.atoms:
-                        if a.atype in ("text", "say") and a.value:
-                            short = a.value[:35]
-                            break
-                    if not short:
-                        short = next((a.value for a in q.atoms if a.value), "— пусто —")
-                        short = short[:35]
-                    type_mark = {"auction": "А", "cat": "К", "bagcat": "К", "sponsored": "2x"}.get(q.qtype, "")
-                    prefix = ("[%s] " % type_mark) if type_mark else ""
-                    self.tree.insert(
-                        t_id, "end",
-                        text="  %s%s%d · %s" % (prefix, media_mark, q.price, short),
-                        tags=("question:%d:%d:%d" % (ri, ti, qi),),
-                    )
-        n_q = sum(len(t.questions) for r in self.pkg.rounds for t in r.themes)
-        n_m = len(self.pkg.media_files)
-        self.status.config(
-            text="Раундов: %d | Тем: %d | Вопросов: %d | Медиафайлов: %d" % (
-                len(self.pkg.rounds),
-                sum(len(r.themes) for r in self.pkg.rounds),
-                n_q, n_m,
-            )
+        # ----- справа: редактор -----
+        right = ttk.Frame(main, padding=6)
+        main.add(right, weight=3)
+        self.editor_title = ttk.Label(
+            right, text="Выберите слева раунд, тему или вопрос", font=("", 12, "bold")
         )
-        if select_path:
-            self._select_path(select_path)
+        self.editor_title.pack(anchor="w")
+        self.hint_label = ttk.Label(
+            right,
+            text="Подсказка появится здесь",
+            foreground="#444",
+            wraplength=560,
+            justify=tk.LEFT,
+        )
+        self.hint_label.pack(anchor="w", pady=(2, 8))
 
-    def _select_path(self, path):
-        def walk(parent, target):
-            for item in self.tree.get_children(parent):
-                tags = self.tree.item(item, "tags")
-                if tags and tags[0] == target:
-                    self.tree.selection_set(item)
-                    self.tree.see(item)
-                    return True
-                if walk(item, target):
-                    return True
-            return False
-        tag = "package" if path[0] == "package" else path[0] + ":" + ":".join(str(x) for x in path[1:])
-        walk("", tag)
+        canvas_host = ttk.Frame(right)
+        canvas_host.pack(fill=tk.BOTH, expand=True)
+        self._canvas = tk.Canvas(canvas_host, highlightthickness=0)
+        scroll = ttk.Scrollbar(canvas_host, orient="vertical", command=self._canvas.yview)
+        self.form_frame = ttk.Frame(self._canvas)
+        self.form_frame.bind(
+            "<Configure>",
+            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
+        )
+        self._canvas.create_window((0, 0), window=self.form_frame, anchor="nw")
+        self._canvas.configure(yscrollcommand=scroll.set)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def _get_path(self):
-        sel = self.tree.selection()
-        if not sel:
-            return None
-        tags = self.tree.item(sel[0], "tags")
-        if not tags:
-            return None
-        tag = tags[0]
-        if tag == "package":
-            return ("package",)
-        parts = tag.split(":")
-        return (parts[0],) + tuple(int(x) for x in parts[1:])
+        def _wheel(event):
+            if event.delta:
+                self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            elif event.num == 5:
+                self._canvas.yview_scroll(1, "units")
+            elif event.num == 4:
+                self._canvas.yview_scroll(-1, "units")
 
-    # ---------- Форма ----------
+        self._canvas.bind_all("<MouseWheel>", _wheel)
+        self._canvas.bind_all("<Button-4>", _wheel)
+        self._canvas.bind_all("<Button-5>", _wheel)
+
+        self.status = ttk.Label(self, text="Готово. Нажмите «Как начать?», если впервые.", padding=6)
+        self.status.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # на случай старых вызовов меню
+        self._legacy_menu_ok = True
 
     def _clear_form(self):
         # Снимаем всё с панели, иначе остаются старые «Кот: можно взять себе» и т.п.
@@ -494,7 +468,7 @@ class SIQEditor(tk.Tk):
 
         if path[0] == "package":
             self.editor_title.config(text="Свойства пакета")
-            self.hint_label.config(text="Название и данные, которые видят игроки.")
+            self.hint_label.config(text="Это «обложка» набора: название увидят игроки. Остальное — по желанию.")
             self._field("Название", "name", self.pkg.name)
             self._field("Автор", "author", self.pkg.author)
             self._field("Издатель", "publisher", getattr(self.pkg, "publisher", ""))
@@ -528,7 +502,7 @@ class SIQEditor(tk.Tk):
             ri = path[1]
             rnd = self.pkg.rounds[ri]
             self.editor_title.config(text="Раунд: " + rnd.name)
-            self.hint_label.config(text="Финал — раунд со ставками в конце игры.")
+            self.hint_label.config(text="Раунд — часть игры. В конце можно сделать «Финал» (ставки).")
             self._field("Название", "name", rnd.name)
             self._check("Финальный раунд", "is_final", rnd.is_final)
             self._add_apply(lambda: self.apply_round(ri))
@@ -537,7 +511,7 @@ class SIQEditor(tk.Tk):
             ri, ti = path[1], path[2]
             theme = self.pkg.rounds[ri].themes[ti]
             self.editor_title.config(text="Тема: " + theme.name)
-            self.hint_label.config(text="Тема = столбец на табло.")
+            self.hint_label.config(text="Тема — колонка на игровом табло (например «История», «Кино»).")
             self._field("Название темы", "name", theme.name)
             self._add_apply(lambda: self.apply_theme(ri, ti))
 
@@ -547,9 +521,8 @@ class SIQEditor(tk.Tk):
             self._editing_question = (ri, ti, qi)
             self.editor_title.config(text="Вопрос")
             self.hint_label.config(
-                text="Тип — кнопки ниже или двойной клик в дереве. "
-                     "Варианты: текст / аудио / фото на выбор. Модификаторы — для ведущего. "
-                     "Предпросмотр — как увидят игроки."
+                text="Сначала выберите тип клетки и прочитайте, что он значит. "
+                     "Потом цена, текст вопроса и ответ."
             )
             builder = question_ui.QuestionFormBuilder(self, self.form_frame, q, (ri, ti, qi))
             builder.build()
@@ -558,7 +531,7 @@ class SIQEditor(tk.Tk):
         self._canvas.yview_moveto(0)
 
     def _add_apply(self, cmd):
-        btn = ttk.Button(self.form_frame, text="Применить изменения", command=cmd)
+        btn = ttk.Button(self.form_frame, text="Сохранить эти правки", command=cmd)
         btn.pack(pady=10)
         self.form_widgets.append(btn)
 
@@ -761,7 +734,7 @@ class SIQEditor(tk.Tk):
         self.dirty = False
         self._clear_form()
         self._refresh_tree()
-        self.title("СиПак")
+        self.title(APP_NAME)
         self._mark_clean()
 
     def open_package(self):
@@ -780,7 +753,7 @@ class SIQEditor(tk.Tk):
             self.current_file = path
             self._clear_form()
             self._refresh_tree()
-            self.title("СиПак — " + os.path.basename(path))
+            self.title(APP_NAME + " — " + os.path.basename(path))
             self._mark_clean()
             self.status.config(
                 text="Открыт: %s (%d медиа)"
@@ -839,7 +812,7 @@ class SIQEditor(tk.Tk):
         try:
             save_siq(self.pkg, path)
             self.current_file = path
-            self.title("СиПак — " + os.path.basename(path))
+            self.title(APP_NAME + " — " + os.path.basename(path))
             self._mark_clean()
             self.status.config(text="Сохранено: " + os.path.basename(path))
         except Exception as e:
@@ -942,6 +915,9 @@ class SIQEditor(tk.Tk):
     def show_beginner_guide(self):
         dialogs.show_beginner_guide(self)
 
+    def show_sigame_lore(self):
+        dialogs.show_sigame_lore(self)
+
     def make_room_qr(self):
         dialogs.make_room_qr(self, status_callback=lambda t: self.status.config(text=t))
 
@@ -952,8 +928,8 @@ class SIQEditor(tk.Tk):
         dialogs.show_help(self)
 
     def check_updates(self):
-        root = os.path.dirname(os.path.abspath(__file__))
-        dialogs.check_for_updates(self, project_dir=root)
+        from utils import project_root
+        dialogs.check_for_updates(self, project_dir=str(project_root()))
 
     def show_about(self):
 

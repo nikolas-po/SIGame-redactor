@@ -21,6 +21,7 @@ from constants import (
     UPDATE_ASSET_WIN,
     UPDATE_ASSET_LINUX,
     UPDATE_ASSET_MAC,
+    GITHUB_API_URL,
 )
 
 
@@ -112,11 +113,19 @@ def check_github_release(repo: str = "") -> Optional[dict]:
     Только релиз с exe/бинарником.
     up_to_date / error / данные обновления.
     """
-    repo = (repo or UPDATE_GITHUB_REPO or "").strip()
+    try:
+        from env_load import load_env, get as env_get
+        load_env()
+        from constants import _reload_env_values
+        _reload_env_values()
+        from constants import UPDATE_GITHUB_REPO as _repo
+    except Exception:
+        _repo = UPDATE_GITHUB_REPO
+    repo = (repo or _repo or "").strip()
     if not repo or "/" not in repo:
         return {"error": "no_repo", "up_to_date": True}
 
-    url = "https://api.github.com/repos/%s/releases/latest" % repo
+    url = GITHUB_API_URL.replace("{repo}", repo) if "{repo}" in GITHUB_API_URL else ("https://api.github.com/repos/%s/releases/latest" % repo)
     try:
         data = _http_json(url)
     except Exception as e:
