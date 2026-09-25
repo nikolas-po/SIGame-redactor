@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import uuid
+from datetime import date
 
 
 class Atom:
@@ -43,6 +44,34 @@ class Question:
         self.secret_cost = 0
         self.cat_self = True
         self.cat_knows = "before"
+        # Варианты подачи (текст / аудио / фото…) — список {"name", "atoms"}
+        self.variants = []
+        # Модификаторы
+        self.mod_partial = False       # можно принять близкий ответ
+        self.mod_no_penalty = False    # без снятия очков за неверный
+        self.mod_host_choice = False   # ведущий выбирает вариант показа
+        self.mod_timer_sec = 0         # подсказка таймера ведущему (0 = по умолчанию)
+        self.mod_note = ""             # заметка-модификатор
+
+    def ensure_variants(self):
+        """Если variants пуст — один вариант из atoms."""
+        if not self.variants:
+            self.variants = [{"name": "Основной", "atoms": [a.copy() for a in (self.atoms or [Atom("text", "")])]}]
+        return self.variants
+
+    def sync_atoms_from_primary(self):
+        vs = self.ensure_variants()
+        self.atoms = [a.copy() for a in vs[0]["atoms"]] if vs else [Atom("text", "")]
+
+    def all_question_atoms(self):
+        """Все атомы для проверки «есть контент»."""
+        atoms = []
+        if self.variants:
+            for v in self.variants:
+                atoms.extend(v.get("atoms") or [])
+        else:
+            atoms = list(self.atoms or [])
+        return atoms
 
     def copy(self):
         q = Question()
@@ -57,13 +86,59 @@ class Question:
         q.secret_cost = self.secret_cost
         q.cat_self = self.cat_self
         q.cat_knows = self.cat_knows
+        q.variants = [
+            {"name": v.get("name", "Вариант"), "atoms": [a.copy() for a in v.get("atoms") or []]}
+            for v in (self.variants or [])
+        ]
+        q.mod_partial = self.mod_partial
+        q.mod_no_penalty = self.mod_no_penalty
+        q.mod_host_choice = self.mod_host_choice
+        q.mod_timer_sec = self.mod_timer_sec
+        q.mod_note = self.mod_note
         return q
 
     def has_text_or_media(self):
-        return any(not a.is_empty() for a in self.atoms)
+        return any(not a.is_empty() for a in self.all_question_atoms())
 
     def has_answer(self):
         return any((a or "").strip() for a in self.answers)
+
+    def preview_text(self):
+        lines = []
+        lines.append("Тип: %s | Цена: %s" % (self.qtype, self.price))
+        mods = []
+        if self.mod_partial:
+            mods.append("близкий ответ")
+        if self.mod_no_penalty:
+            mods.append("без штрафа")
+        if self.mod_host_choice:
+            mods.append("выбор ведущего")
+        if self.mod_timer_sec:
+            mods.append("таймер %s с" % self.mod_timer_sec)
+        if mods:
+            lines.append("Модификаторы: " + ", ".join(mods))
+        if self.mod_note:
+            lines.append("Заметка: " + self.mod_note)
+        vs = self.variants if self.variants else [{"name": "Основной", "atoms": self.atoms}]
+        for i, v in enumerate(vs):
+            lines.append("")
+            lines.append("— Вариант %d: %s —" % (i + 1, v.get("name") or "?"))
+            for a in v.get("atoms") or []:
+                lines.append("  " + a.display())
+        if self.answer_atoms:
+            lines.append("")
+            lines.append("— В ответе —")
+            for a in self.answer_atoms:
+                lines.append("  " + a.display())
+        lines.append("")
+        lines.append("Правильно: " + " / ".join(self.answers or ["—"]))
+        if self.wrong:
+            lines.append("Неправильно: " + " / ".join(self.wrong))
+        if self.comment:
+            lines.append("Комментарий: " + self.comment)
+        if self.qtype in ("cat", "bagcat"):
+            lines.append("Секрет: %s (cost %s)" % (self.secret_theme or "—", self.secret_cost))
+        return "\n".join(lines)
 
 
 class Theme:
@@ -93,7 +168,7 @@ class Round:
 class Package:
     def __init__(self):
         self.name = "Мой набор вопросов"
-        self.date = "23.09.2026"
+        self.date = date.today().strftime("%d.%m.%Y")
         self.difficulty = 4
         self.restriction = "12+"
         self.language = "ru-RU"

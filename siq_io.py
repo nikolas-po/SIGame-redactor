@@ -4,12 +4,61 @@ import os
 import uuid
 import zipfile
 import tempfile
+import shutil
 import xml.etree.ElementTree as ET
 
 from constants import NS, MEDIA_FOLDERS, MEDIA_EXTS
 from models import Package, Round, Theme, Question, Atom
 
 ET.register_namespace("", NS)
+
+# Временные папки распаковки .siq (чистятся cleanup_extract_dirs)
+_EXTRACT_DIRS = []
+
+
+def cleanup_extract_dirs():
+    """Удаляет временные папки, созданные load_siq."""
+    while _EXTRACT_DIRS:
+        d = _EXTRACT_DIRS.pop()
+        try:
+            if d and os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def user_data_dir():
+    """Папка для записи (QR, автосохранение) — не рядом с exe."""
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("HOME") or tempfile.gettempdir()
+    path = os.path.join(base, "SIGameEditor")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        path = tempfile.gettempdir()
+    return path
+
+
+def prune_media_files(pkg):
+    """Оставляет в media_files только файлы, на которые ссылаются атомы или логотип."""
+    used = set()
+    if getattr(pkg, "logo", None):
+        used.add(str(pkg.logo).lstrip("@"))
+    for rnd in pkg.rounds:
+        for theme in rnd.themes:
+            for q in theme.questions:
+                atoms = list(q.answer_atoms or [])
+                if getattr(q, "variants", None):
+                    for v in q.variants:
+                        atoms.extend(v.get("atoms") or [])
+                else:
+                    atoms.extend(q.atoms or [])
+                for atom in atoms:
+                    if getattr(atom, "atype", None) in MEDIA_FOLDERS and atom.value:
+                        used.add(str(atom.value).lstrip("@"))
+    pkg.media_files = {
+        k: v for k, v in list(pkg.media_files.items()) if k in used
+    }
+
 
 
 def _local(tag):
@@ -98,9 +147,21 @@ def package_to_xml(pkg):
                             p.text = knows
 
                 sc = ET.SubElement(q_el, "{%s}scenario" % NS)
-                atoms = q.atoms if q.atoms else [Atom("text", "")]
-                for atom in atoms:
-                    _write_atom(sc, atom)
+                variants = getattr(q, "variants", None) or []
+                if variants and len(variants) > 1:
+                    for vi, v in enumerate(variants):
+                        label = (v.get("name") or ("Вариант %d" % (vi + 1))).strip()
+                        _write_atom(sc, Atom("say", "[%s]" % label))
+                        atoms = v.get("atoms") or [Atom("text", "")]
+                        for atom in atoms:
+                            _write_atom(sc, atom)
+                elif variants and len(variants) == 1:
+                    for atom in variants[0].get("atoms") or [Atom("text", "")]:
+                        _write_atom(sc, atom)
+                else:
+                    atoms = q.atoms if q.atoms else [Atom("text", "")]
+                    for atom in atoms:
+                        _write_atom(sc, atom)
                 if q.answer_atoms:
                     ET.SubElement(sc, "{%s}atom" % NS, {"type": "marker"})
                     for atom in q.answer_atoms:
@@ -119,10 +180,32 @@ def package_to_xml(pkg):
                             we = ET.SubElement(wrong, "{%s}answer" % NS)
                             we.text = str(w)[:500]
 
+                # комментарий + модификаторы для ведущего
+                cparts = []
                 if q.comment:
+                    cparts.append(str(q.comment))
+                mods = []
+                if getattr(q, "mod_partial", False):
+                    mods.append("близкий ответ ок")
+                if getattr(q, "mod_no_penalty", False):
+                    mods.append("без штрафа")
+                if getattr(q, "mod_host_choice", False):
+                    mods.append("выбор варианта ведущим")
+                if getattr(q, "mod_timer_sec", 0):
+                    mods.append("таймер %s с" % q.mod_timer_sec)
+                if getattr(q, "mod_note", ""):
+                    mods.append(str(q.mod_note))
+                if mods:
+                    cparts.append("Модификаторы: " + "; ".join(mods))
+                if variants and len(variants) > 1:
+                    cparts.append(
+                        "Варианты показа: "
+                        + ", ".join((v.get("name") or "?") for v in variants)
+                    )
+                if cparts:
                     qinfo = ET.SubElement(q_el, "{%s}info" % NS)
                     qc = ET.SubElement(qinfo, "{%s}comments" % NS)
-                    qc.text = str(q.comment)[:2000]
+                    qc.text = " | ".join(cparts)[:2000]
 
     _indent(root)
     return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode")
@@ -295,6 +378,7 @@ def save_siq(pkg, path):
     if parent and not os.path.isdir(parent):
         raise ValueError("Папка не существует:\n%s" % parent)
 
+    prune_media_files(pkg)
     xml = package_to_xml(pkg)
     content_types = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -378,6 +462,8 @@ def load_siq(path):
                 full = os.path.join(d, fn)
                 if os.path.isfile(full):
                     pkg.media_files[fn] = full
+    _EXTRACT_DIRS.append(extract_dir)
+    pkg._extract_dir = extract_dir  # noqa: служебное поле
     return pkg
 
 

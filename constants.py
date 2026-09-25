@@ -36,3 +36,15 @@ MAX_TEXT_LEN = 5000
 MIN_PRICE = 1
 MAX_PRICE = 999999
 DEFAULT_PRICES = [100, 200, 300, 400, 500]
+
+
+# Обновления: владелец/репозиторий на GitHub (Releases)
+# Пример: "username/siq-editor" — тогда проверяются
+# https://github.com/username/siq-editor/releases
+# Пустая строка = проверка только через git pull (если есть .git)
+# Пример: "username/sipak". Пусто = без автообновления при запуске.
+UPDATE_GITHUB_REPO = ""
+# Имя asset в релизе для Windows (exe), Linux, macOS
+UPDATE_ASSET_WIN = "SiPak.exe"
+UPDATE_ASSET_LINUX = "SiPak"
+UPDATE_ASSET_MAC = "SiPak"

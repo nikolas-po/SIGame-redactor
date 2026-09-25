@@ -2,6 +2,7 @@
 """Главное окно редактора пакетов SIGame."""
 
 import os
+from datetime import date
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -17,15 +18,24 @@ from constants import (
     MAX_NAME_LEN,
 )
 from models import Package, Round, Theme, Question, Atom
-from siq_io import save_siq, load_siq, validate_package
+from siq_io import save_siq, load_siq, validate_package, cleanup_extract_dirs, user_data_dir
 import dialogs
+from version import __version__
+import question_ui
 
 
 class SIQEditor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("SIGame Редактор — текст, фото, звук, видео")
+        self.title("СиПак — редактор пакетов SIGame")
         self.geometry("1200x750")
+        try:
+            icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo_sipak_64.png")
+            if os.path.isfile(icon):
+                self._icon_img = tk.PhotoImage(file=icon)
+                self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
         self.minsize(960, 620)
 
         self.pkg = Package()
@@ -43,12 +53,13 @@ class SIQEditor(tk.Tk):
         self._new_defaults()
         self._refresh_tree()
         self.after(400, self._soft_welcome)
+        self.after(1500, self._startup_update_check)
 
     def _new_defaults(self):
         self.pkg = Package()
         self.pkg.name = "Экономика и финансы для студентов"
         self.pkg.comments = "Вопросы с медиа"
-        self.pkg.date = "23.09.2026"
+        self.pkg.date = date.today().strftime("%d.%m.%Y")
         self.current_file = None
 
     def _build_ui(self):
@@ -56,7 +67,9 @@ class SIQEditor(tk.Tk):
         top.pack(fill=tk.X)
         for text, cmd in [
             ("Как начать?", self.show_beginner_guide),
+            ("Предпросмотр", self.preview_selected),
             ("Справка", self.show_help),
+            ("Обновления", self.check_updates),
             ("Открыть", self.open_package),
             ("Сохранить", self.save_package),
             ("Новый", self.new_package),
@@ -81,6 +94,7 @@ class SIQEditor(tk.Tk):
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        self.tree.bind("<Double-1>", self.on_tree_double)
 
         bf = ttk.LabelFrame(left, text="Добавить / порядок", padding=4)
         bf.pack(fill=tk.X, pady=6)
@@ -149,13 +163,21 @@ class SIQEditor(tk.Tk):
                 )
                 for qi, q in enumerate(theme.questions):
                     media_mark = ""
-                    types_in = {a.atype for a in q.atoms + q.answer_atoms}
+                    all_a = list(q.answer_atoms or [])
+                    if getattr(q, "variants", None):
+                        for v in q.variants:
+                            all_a.extend(v.get("atoms") or [])
+                    else:
+                        all_a.extend(q.atoms or [])
+                    types_in = {a.atype for a in all_a}
                     if "image" in types_in:
                         media_mark += "Ф"
                     if "voice" in types_in:
                         media_mark += "З"
                     if "video" in types_in:
                         media_mark += "В"
+                    if getattr(q, "variants", None) and len(q.variants) > 1:
+                        media_mark += "×%d" % len(q.variants)
                     if media_mark:
                         media_mark = "[" + media_mark + "] "
                     short = ""
@@ -215,14 +237,22 @@ class SIQEditor(tk.Tk):
     # ---------- Форма ----------
 
     def _clear_form(self):
-        for w in self.form_widgets:
-            w.destroy()
+        # Снимаем всё с панели, иначе остаются старые «Кот: можно взять себе» и т.п.
+        for w in list(self.form_widgets):
+            try:
+                w.destroy()
+            except Exception:
+                pass
         self.form_widgets.clear()
         self.form_vars.clear()
         self._listboxes.clear()
+        for child in list(self.form_frame.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
         self._atom_listbox = None
         self._answer_atom_listbox = None
-        self._editing_question = None
 
     def _field(self, label, key, value="", multiline=False, hint=""):
         row = ttk.Frame(self.form_frame)
@@ -431,6 +461,29 @@ class SIQEditor(tk.Tk):
         ttk.Button(btns2, text="↑", width=3, command=lambda: move(-1)).pack(side=tk.LEFT, padx=1)
         ttk.Button(btns2, text="↓", width=3, command=lambda: move(1)).pack(side=tk.LEFT, padx=1)
 
+    def on_tree_double(self, event=None):
+        path = self._get_path()
+        if not path or path[0] != "question":
+            return
+        ri, ti, qi = path[1], path[2], path[3]
+        q = self.pkg.rounds[ri].themes[ti].questions[qi]
+        new_type = question_ui.pick_question_type(self, q.qtype or "simple")
+        if new_type and new_type != q.qtype:
+            q.qtype = new_type
+            self._mark_dirty()
+            self._refresh_tree(("question", ri, ti, qi))
+            self.on_select()
+            self.status.config(text="Тип: " + new_type)
+
+    def preview_selected(self):
+        path = self._get_path()
+        if not path or path[0] != "question":
+            messagebox.showinfo("Предпросмотр", "Выберите вопрос в дереве.")
+            return
+        ri, ti, qi = path[1], path[2], path[3]
+        q = self.pkg.rounds[ri].themes[ti].questions[qi]
+        question_ui.show_preview(self, q)
+
     def on_select(self, event=None):
         path = self._get_path()
         self._clear_form()
@@ -492,34 +545,15 @@ class SIQEditor(tk.Tk):
             ri, ti, qi = path[1], path[2], path[3]
             q = self.pkg.rounds[ri].themes[ti].questions[qi]
             self._editing_question = (ri, ti, qi)
-            # работаем с копиями атомов до «Применить»
-            self._q_atoms = [a.copy() for a in q.atoms]
-            self._q_answer_atoms = [a.copy() for a in q.answer_atoms]
-
             self.editor_title.config(text="Вопрос")
             self.hint_label.config(
-                text="Добавляйте текст, фото, звук и видео. Порядок = порядок показа. "
-                     "Блок «В ответе» показывается после правильного ответа."
+                text="Тип — кнопки ниже или двойной клик в дереве. "
+                     "Варианты: текст / аудио / фото на выбор. Модификаторы — для ведущего. "
+                     "Предпросмотр — как увидят игроки."
             )
-            self._field("Стоимость", "price", q.price)
-            type_labels = ["%s — %s" % (k, v) for k, v in QUESTION_TYPES]
-            cur = next(("%s — %s" % (k, v) for k, v in QUESTION_TYPES if k == q.qtype), type_labels[0])
-            self._combo("Тип", "qtype", cur, type_labels)
-
-            self._atom_editor("Сценарий вопроса (что видят/слышат игроки)", self._q_atoms, is_answer=False)
-            self._atom_editor("В ответе (после marker — показ правильного ответа)", self._q_answer_atoms, is_answer=True)
-
-            self._list_editor("Правильные ответы (текст)", "answers", q.answers or [""], "Правильный ответ")
-            self._list_editor("Неправильные ответы", "wrong", q.wrong, "Неправильный")
-            self._field("Комментарий ведущему", "comment", q.comment, multiline=True)
-            self._field("Секретная тема (кот)", "secret_theme", q.secret_theme, hint="Для кота в мешке")
-            self._field("Секретная стоимость", "secret_cost", q.secret_cost or "", hint="0 = как на табло")
-            self._check("Кот: можно взять себе", "cat_self", getattr(q, "cat_self", True))
-            knows_choices = ["before — узнают до передачи", "after — после передачи", "never — не узнают (только очки)"]
-            cur_knows = getattr(q, "cat_knows", "before") or "before"
-            cur_label = next((c for c in knows_choices if c.startswith(cur_knows)), knows_choices[0])
-            self._combo("Кот: когда видна тема", "cat_knows", cur_label, knows_choices)
-            self._add_apply(lambda: self.apply_question(ri, ti, qi))
+            builder = question_ui.QuestionFormBuilder(self, self.form_frame, q, (ri, ti, qi))
+            builder.build()
+            self.form_widgets.extend(builder.widgets)
 
         self._canvas.yview_moveto(0)
 
@@ -557,11 +591,14 @@ class SIQEditor(tk.Tk):
         self.status.config(text="Раунд обновлён")
 
     def apply_theme(self, ri, ti):
-        if self._get("name"):
-            self.pkg.rounds[ri].themes[ti].name = self._get("name")
+        name = self._get("name")
+        if name:
+            self.pkg.rounds[ri].themes[ti].name = name[:200]
             self._refresh_tree(("theme", ri, ti))
             self._mark_dirty()
-        self.status.config(text="Тема обновлена")
+            self.status.config(text="Тема обновлена")
+        else:
+            self.status.config(text="Название темы не может быть пустым")
 
     def apply_question(self, ri, ti, qi):
         q = self.pkg.rounds[ri].themes[ti].questions[qi]
@@ -647,11 +684,13 @@ class SIQEditor(tk.Tk):
         path = self._get_path()
         if not path or path[0] == "package":
             return
+        moved = False
         if path[0] == "round":
             i, j = path[1], path[1] + d
             if 0 <= j < len(self.pkg.rounds):
                 self.pkg.rounds[i], self.pkg.rounds[j] = self.pkg.rounds[j], self.pkg.rounds[i]
                 self._refresh_tree(("round", j))
+                moved = True
         elif path[0] == "theme":
             ri, ti = path[1], path[2]
             th = self.pkg.rounds[ri].themes
@@ -659,6 +698,7 @@ class SIQEditor(tk.Tk):
             if 0 <= j < len(th):
                 th[ti], th[j] = th[j], th[ti]
                 self._refresh_tree(("theme", ri, j))
+                moved = True
         elif path[0] == "question":
             ri, ti, qi = path[1], path[2], path[3]
             qs = self.pkg.rounds[ri].themes[ti].questions
@@ -666,6 +706,9 @@ class SIQEditor(tk.Tk):
             if 0 <= j < len(qs):
                 qs[qi], qs[j] = qs[j], qs[qi]
                 self._refresh_tree(("question", ri, ti, j))
+                moved = True
+        if moved:
+            self._mark_dirty()
 
     def duplicate(self):
         path = self._get_path()
@@ -675,16 +718,19 @@ class SIQEditor(tk.Tk):
             ri = path[1]
             self.pkg.rounds.insert(ri + 1, self.pkg.rounds[ri].copy())
             self._refresh_tree(("round", ri + 1))
+            self._mark_dirty()
         elif path[0] == "theme":
             ri, ti = path[1], path[2]
             self.pkg.rounds[ri].themes.insert(ti + 1, self.pkg.rounds[ri].themes[ti].copy())
             self._refresh_tree(("theme", ri, ti + 1))
+            self._mark_dirty()
         elif path[0] == "question":
             ri, ti, qi = path[1], path[2], path[3]
             self.pkg.rounds[ri].themes[ti].questions.insert(
                 qi + 1, self.pkg.rounds[ri].themes[ti].questions[qi].copy()
             )
             self._refresh_tree(("question", ri, ti, qi + 1))
+            self._mark_dirty()
 
     def delete_selected(self):
         path = self._get_path()
@@ -710,11 +756,12 @@ class SIQEditor(tk.Tk):
             return
         if not messagebox.askyesno("Новый", "Создать пустой пакет?", parent=self):
             return
+        cleanup_extract_dirs()
         self._new_defaults()
         self.dirty = False
         self._clear_form()
         self._refresh_tree()
-        self.title("SIGame Редактор")
+        self.title("СиПак")
         self._mark_clean()
 
     def open_package(self):
@@ -728,11 +775,12 @@ class SIQEditor(tk.Tk):
         if not path:
             return
         try:
+            cleanup_extract_dirs()
             self.pkg = load_siq(path)
             self.current_file = path
             self._clear_form()
             self._refresh_tree()
-            self.title("SIGame — " + os.path.basename(path))
+            self.title("СиПак — " + os.path.basename(path))
             self._mark_clean()
             self.status.config(
                 text="Открыт: %s (%d медиа)"
@@ -742,11 +790,20 @@ class SIQEditor(tk.Tk):
             messagebox.showerror("Не удалось открыть", str(e), parent=self)
 
     def save_package(self):
-        if not self._check_package(for_play=False):
-            # errors block; warnings already shown
-            errors, _ = validate_package(self.pkg)
-            if errors:
-                return
+        errors, warnings = validate_package(self.pkg)
+        if errors:
+            messagebox.showerror(
+                "Нельзя сохранить",
+                "Исправьте:\n• " + "\n• ".join(errors),
+                parent=self,
+            )
+            return
+        if warnings:
+            messagebox.showwarning(
+                "Проверка",
+                "Замечания:\n• " + "\n• ".join(warnings[:12]),
+                parent=self,
+            )
         if self.current_file:
             try:
                 save_siq(self.pkg, self.current_file)
@@ -782,7 +839,7 @@ class SIQEditor(tk.Tk):
         try:
             save_siq(self.pkg, path)
             self.current_file = path
-            self.title("SIGame — " + os.path.basename(path))
+            self.title("СиПак — " + os.path.basename(path))
             self._mark_clean()
             self.status.config(text="Сохранено: " + os.path.basename(path))
         except Exception as e:
@@ -797,10 +854,7 @@ class SIQEditor(tk.Tk):
                 c if c.isalnum() or c in "._- " else "_"
                 for c in (self.pkg.name or "pack")
             ).strip() or "pack"
-            path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                safe_name[:40] + ".siq",
-            )
+            path = os.path.join(user_data_dir(), safe_name[:40] + ".siq")
         try:
             save_siq(self.pkg, path)
             self.current_file = path
@@ -851,6 +905,10 @@ class SIQEditor(tk.Tk):
 
     def _on_close(self):
         if self._confirm_discard():
+            try:
+                cleanup_extract_dirs()
+            except Exception:
+                pass
             self.destroy()
 
     def _check_package(self, for_play=False):
@@ -875,6 +933,12 @@ class SIQEditor(tk.Tk):
     def _soft_welcome(self):
         dialogs.soft_welcome(self, self.show_beginner_guide)
 
+    def _startup_update_check(self):
+        try:
+            dialogs.startup_auto_update(self)
+        except Exception:
+            pass
+
     def show_beginner_guide(self):
         dialogs.show_beginner_guide(self)
 
@@ -887,6 +951,11 @@ class SIQEditor(tk.Tk):
     def show_help(self):
         dialogs.show_help(self)
 
+    def check_updates(self):
+        root = os.path.dirname(os.path.abspath(__file__))
+        dialogs.check_for_updates(self, project_dir=root)
+
     def show_about(self):
+
         dialogs.show_about(self)
 

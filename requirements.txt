@@ -1,3 +1,6 @@
-
+# СиПак
 Pillow>=9.0.0
-pyinstaller>=6.0.0
+qrcode>=7.0
+
+# Сборка exe (по желанию)
+# pyinstaller>=6.0.0
