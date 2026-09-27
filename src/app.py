@@ -2,6 +2,7 @@
 """Главное окно редактора пакетов SIGame."""
 
 import os
+import re
 from datetime import date
 import webbrowser
 import tkinter as tk
@@ -50,7 +51,7 @@ class SIQEditor(tk.Tk):
         self._listboxes = {}
         self._atom_listbox = None
         self._answer_atom_listbox = None
-        self._editing_question = None  # (ri, ti, qi) while form open
+        self._editing_question = None
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
@@ -58,6 +59,96 @@ class SIQEditor(tk.Tk):
         self._refresh_tree()
         self.after(400, self._soft_welcome)
         self.after(1500, self._startup_update_check)
+
+    def _get_path(self):
+        """Путь выбранного узла: package / round / theme / question."""
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        iid = sel[0]
+        if iid == "package":
+            return ("package",)
+        m = re.match(r"^r(\d+)$", iid)
+        if m:
+            return ("round", int(m.group(1)))
+        m = re.match(r"^r(\d+)t(\d+)$", iid)
+        if m:
+            return ("theme", int(m.group(1)), int(m.group(2)))
+        m = re.match(r"^r(\d+)t(\d+)q(\d+)$", iid)
+        if m:
+            return ("question", int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return None
+
+    def _refresh_tree(self, select_path=None):
+        """Перестраивает дерево из self.pkg. select_path — куда вернуть выделение."""
+        try:
+            self.tree.delete(*self.tree.get_children())
+        except Exception:
+            pass
+        root = self.tree.insert(
+            "", "end", iid="package",
+            text=(self.pkg.name or "Пакет")[:80],
+            open=True,
+        )
+        for ri, rnd in enumerate(self.pkg.rounds):
+            rlabel = (rnd.name or ("Раунд %d" % (ri + 1)))[:60]
+            if getattr(rnd, "is_final", False):
+                rlabel = "★ " + rlabel
+            rid = self.tree.insert(root, "end", iid="r%d" % ri, text=rlabel, open=True)
+            for ti, theme in enumerate(rnd.themes):
+                tlabel = (theme.name or ("Тема %d" % (ti + 1)))[:50]
+                tid = self.tree.insert(rid, "end", iid="r%dt%d" % (ri, ti), text=tlabel, open=True)
+                for qi, q in enumerate(theme.questions):
+                    price = getattr(q, "price", 0)
+                    mark = ""
+                    qt = getattr(q, "qtype", "simple") or "simple"
+                    if qt == "auction":
+                        mark = " [А]"
+                    elif qt in ("cat", "bagcat"):
+                        mark = " [К]"
+                    elif qt == "sponsored":
+                        mark = " [×2]"
+                    media = ""
+                    atoms = list(getattr(q, "atoms", None) or [])
+                    for v in getattr(q, "variants", None) or []:
+                        atoms.extend(v.get("atoms") or [])
+                    types = {getattr(a, "atype", "") for a in atoms}
+                    if "image" in types:
+                        media += "Ф"
+                    if "voice" in types:
+                        media += "З"
+                    if "video" in types:
+                        media += "В"
+                    if media:
+                        mark += " " + media
+                    nvar = len(getattr(q, "variants", None) or [])
+                    if nvar > 1:
+                        mark += " ×%d" % nvar
+                    qlabel = "%s%s" % (price, mark)
+                    self.tree.insert(
+                        tid, "end",
+                        iid="r%dt%dq%d" % (ri, ti, qi),
+                        text=qlabel,
+                    )
+        if not select_path:
+            select_path = ("package",)
+        iid = None
+        if select_path[0] == "package":
+            iid = "package"
+        elif select_path[0] == "round" and len(select_path) >= 2:
+            iid = "r%d" % select_path[1]
+        elif select_path[0] == "theme" and len(select_path) >= 3:
+            iid = "r%dt%d" % (select_path[1], select_path[2])
+        elif select_path[0] == "question" and len(select_path) >= 4:
+            iid = "r%dt%dq%d" % (select_path[1], select_path[2], select_path[3])
+        if iid and self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.see(iid)
+            self.tree.focus(iid)
+            try:
+                self.on_select()
+            except Exception:
+                pass
 
     def _new_defaults(self):
         self.pkg = Package()
@@ -86,6 +177,7 @@ class SIQEditor(tk.Tk):
 
         m_help = tk.Menu(menubar, tearoff=0)
         m_help.add_command(label="Как начать (3 шага)", command=self.show_beginner_guide)
+        m_help.add_command(label="Все вопросы сразу…", command=self.show_pack_overview)
         m_help.add_command(label="Что такое «Своя игра»?", command=self.show_sigame_lore)
         m_help.add_command(label="Справка", command=self.show_help)
         m_help.add_command(label="Обновления", command=self.check_updates)
@@ -104,6 +196,7 @@ class SIQEditor(tk.Tk):
             ("Играть", self.play_online),
         ]:
             ttk.Button(top, text=text, command=cmd).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Все вопросы", command=self.show_pack_overview).pack(side=tk.RIGHT, padx=4)
         ttk.Button(top, text="Как начать?", command=self.show_beginner_guide).pack(
             side=tk.RIGHT, padx=4
         )
@@ -193,6 +286,22 @@ class SIQEditor(tk.Tk):
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         def _wheel(event):
+            # только если курсор над канвасом формы
+            try:
+                w = self.winfo_containing(event.x_root, event.y_root)
+            except Exception:
+                w = None
+            ok = False
+            while w is not None:
+                if w == self._canvas or w == self.form_frame:
+                    ok = True
+                    break
+                try:
+                    w = w.master
+                except Exception:
+                    break
+            if not ok:
+                return
             if event.delta:
                 self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
             elif event.num == 5:
@@ -200,9 +309,12 @@ class SIQEditor(tk.Tk):
             elif event.num == 4:
                 self._canvas.yview_scroll(-1, "units")
 
-        self._canvas.bind_all("<MouseWheel>", _wheel)
-        self._canvas.bind_all("<Button-4>", _wheel)
-        self._canvas.bind_all("<Button-5>", _wheel)
+        self._canvas.bind("<MouseWheel>", _wheel)
+        self._canvas.bind("<Button-4>", _wheel)
+        self._canvas.bind("<Button-5>", _wheel)
+        self.form_frame.bind("<MouseWheel>", _wheel)
+        self.form_frame.bind("<Button-4>", _wheel)
+        self.form_frame.bind("<Button-5>", _wheel)
 
         self.status = ttk.Label(self, text="Готово. Нажмите «Как начать?», если впервые.", padding=6)
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
@@ -230,22 +342,24 @@ class SIQEditor(tk.Tk):
 
     def _field(self, label, key, value="", multiline=False, hint=""):
         row = ttk.Frame(self.form_frame)
-        row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text=label, width=20).pack(side=tk.LEFT, anchor="n")
+        row.pack(fill=tk.X, pady=4)
+        ttk.Label(row, text=label, width=16).pack(side=tk.LEFT, anchor="n")
         if multiline:
-            txt = tk.Text(row, height=3, width=48, wrap=tk.WORD, font=("", 10))
+            txt = tk.Text(row, height=5, wrap=tk.WORD, font=("", 12))
             txt.insert("1.0", value)
-            txt.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             self.form_vars[key] = txt
         else:
             var = tk.StringVar(value=str(value))
-            ttk.Entry(row, textvariable=var, width=48).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ent = ttk.Entry(row, textvariable=var, font=("", 12))
+            ent.pack(side=tk.LEFT, fill=tk.X, expand=True)
             self.form_vars[key] = var
         self.form_widgets.append(row)
         if hint:
-            h = ttk.Label(self.form_frame, text=hint, foreground="#666", font=("", 8))
-            h.pack(anchor="w", padx=(150, 0))
+            h = ttk.Label(self.form_frame, text=hint, foreground="#666", font=("", 9), wraplength=600)
+            h.pack(anchor="w", padx=(130, 0))
             self.form_widgets.append(h)
+
 
     def _combo(self, label, key, value, choices):
         row = ttk.Frame(self.form_frame)
@@ -531,7 +645,8 @@ class SIQEditor(tk.Tk):
         self._canvas.yview_moveto(0)
 
     def _add_apply(self, cmd):
-        btn = ttk.Button(self.form_frame, text="Сохранить эти правки", command=cmd)
+        ttk.Label(self.form_frame, text="После правок нажмите кнопку или выберите другой пункт слева", foreground="#666").pack(anchor="w")
+        btn = ttk.Button(self.form_frame, text="Сохранить правки", command=cmd)
         btn.pack(pady=10)
         self.form_widgets.append(btn)
 
@@ -914,6 +1029,10 @@ class SIQEditor(tk.Tk):
 
     def show_beginner_guide(self):
         dialogs.show_beginner_guide(self)
+
+    def show_pack_overview(self):
+        from pack_view import show_pack_overview
+        show_pack_overview(self)
 
     def show_sigame_lore(self):
         dialogs.show_sigame_lore(self)

@@ -176,7 +176,8 @@ def make_room_qr(parent, status_callback=None):
                 pass
             win.after(0, lambda: finish_ok(result, pin_clean))
         except Exception as e:
-            win.after(0, lambda: finish_fail(str(e)))
+            err_msg = str(e)
+            win.after(0, lambda m=err_msg: finish_fail(m))
 
     def generate():
         if state["busy"]:

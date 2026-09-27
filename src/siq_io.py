@@ -61,6 +61,35 @@ def prune_media_files(pkg):
 
 
 
+
+VARIANT_MARK_RE = __import__("re").compile(r"^\[(.+)\]$")
+
+
+def _split_variants_from_atoms(atoms):
+    """Восстанавливает варианты из сценария с метками [Имя]."""
+    if not atoms:
+        return [{"name": "Основной", "atoms": [__import__("models", fromlist=["Atom"]).Atom("text", "")]}]
+    from models import Atom
+    variants = []
+    current = None
+    for a in atoms:
+        if a.atype == "say" and VARIANT_MARK_RE.match((a.value or "").strip()):
+            name = VARIANT_MARK_RE.match(a.value.strip()).group(1).strip()
+            current = {"name": name or "Вариант", "atoms": []}
+            variants.append(current)
+        else:
+            if current is None:
+                current = {"name": "Основной", "atoms": []}
+                variants.append(current)
+            current["atoms"].append(a)
+    if not variants:
+        variants = [{"name": "Основной", "atoms": list(atoms)}]
+    for v in variants:
+        if not v["atoms"]:
+            v["atoms"] = [Atom("text", "")]
+    return variants
+
+
 def _local(tag):
     return tag.split("}")[-1] if "}" in tag else tag
 
@@ -348,6 +377,12 @@ def _parse_question(q_el, pkg, media_extract_dir):
                     q.atoms.append(atom)
             if not q.atoms:
                 q.atoms = [Atom("text", "")]
+            try:
+                q.variants = _split_variants_from_atoms(list(q.atoms))
+                if q.variants:
+                    q.atoms = list(q.variants[0].get("atoms") or q.atoms)
+            except Exception:
+                pass
         elif ptag == "right":
             q.answers = []
             for ans in part:
