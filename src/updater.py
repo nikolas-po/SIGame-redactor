@@ -8,21 +8,21 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import time
-import tempfile
 import subprocess
+import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from typing import Optional, Tuple
 
-from version import __version__
 from constants import (
-    UPDATE_GITHUB_REPO,
-    UPDATE_ASSET_WIN,
     UPDATE_ASSET_LINUX,
     UPDATE_ASSET_MAC,
+    UPDATE_ASSET_WIN,
+    UPDATE_GITHUB_REPO,
 )
+from version import __version__
 
 
 def current_version() -> str:
@@ -67,12 +67,19 @@ def _headers() -> dict:
     }
     token = ""
     try:
-        from env_load import load_env, get as env_get
+        from env_load import get as env_get
+        from env_load import load_env
 
         load_env()
-        token = (env_get("GITHUB_TOKEN") or env_get("UPDATE_GITHUB_TOKEN") or "").strip()
+        token = (
+            env_get("GITHUB_TOKEN") or env_get("UPDATE_GITHUB_TOKEN") or ""
+        ).strip()
     except Exception:
-        token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("UPDATE_GITHUB_TOKEN") or "").strip()
+        token = (
+            os.environ.get("GITHUB_TOKEN")
+            or os.environ.get("UPDATE_GITHUB_TOKEN")
+            or ""
+        ).strip()
     if token:
         h["Authorization"] = "Bearer " + token
     return h
@@ -144,7 +151,11 @@ def _pick_asset(assets: list) -> Tuple[str, str, int]:
         return "", "", 0
 
     def url_of(a):
-        return a.get("browser_download_url") or "", (a.get("name") or "").strip(), int(a.get("size") or 0)
+        return (
+            a.get("browser_download_url") or "",
+            (a.get("name") or "").strip(),
+            int(a.get("size") or 0),
+        )
 
     for a in assets:
         name = (a.get("name") or "").strip()
@@ -205,31 +216,64 @@ def clear_skipped_if_installed(ver: str) -> None:
 
 
 def get_configured_repo() -> str:
-    """Репозиторий из .env / constants / config."""
-    repo = ""
-    try:
-        from env_load import load_env, get as env_get
+    """Репозиторий: вшитый в exe → файл рядом с exe → .env (опционально)."""
+    candidates = []
 
-        load_env()
-        repo = (env_get("UPDATE_GITHUB_REPO") or "").strip()
+    # 1) вшитый в constants / config
+    try:
+        from constants import BUILTIN_UPDATE_REPO, UPDATE_GITHUB_REPO
+
+        candidates.append(BUILTIN_UPDATE_REPO)
+        candidates.append(UPDATE_GITHUB_REPO)
+    except Exception:
+        candidates.append(UPDATE_GITHUB_REPO)
+    try:
+        import config
+
+        candidates.append(getattr(config, "UPDATE_GITHUB_REPO", ""))
+        candidates.append(getattr(config, "BUILTIN_UPDATE_REPO", ""))
     except Exception:
         pass
-    if not repo:
-        try:
-            from constants import _reload_env_values, UPDATE_GITHUB_REPO as r
 
-            _reload_env_values()
-            repo = (r or "").strip()
-        except Exception:
-            repo = (UPDATE_GITHUB_REPO or "").strip()
-    if not repo:
+    # 2) файл рядом с exe / программой: update_repo.txt (одна строка user/repo)
+    paths = []
+    if getattr(sys, "frozen", False):
+        paths.append(os.path.join(os.path.dirname(sys.executable), "update_repo.txt"))
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        paths.append(os.path.join(here, "update_repo.txt"))
+        paths.append(os.path.join(os.path.dirname(here), "update_repo.txt"))
+    except Exception:
+        pass
+    paths.append(os.path.join(os.getcwd(), "update_repo.txt"))
+    for p in paths:
         try:
-            import config
-
-            repo = (getattr(config, "UPDATE_GITHUB_REPO", "") or "").strip()
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    line = f.read().strip().splitlines()[0].strip()
+                if line and not line.startswith("#"):
+                    candidates.insert(0, line)  # файл — приоритетнее пустого builtin
+                    break
         except Exception:
             pass
-    return normalize_repo(repo)
+
+    # 3) .env только если явно задан (не обязателен)
+    try:
+        from env_load import get as env_get
+        from env_load import load_env
+
+        load_env()
+        env_repo = (env_get("UPDATE_GITHUB_REPO") or "").strip()
+        if env_repo:
+            candidates.insert(0, env_repo)
+    except Exception:
+        pass
+
+    for c in candidates:
+        repo = normalize_repo(c or "")
+        if repo:
+            return repo
+    return ""
 
 
 def check_github_release(repo: str = "") -> dict:
@@ -242,7 +286,7 @@ def check_github_release(repo: str = "") -> dict:
         return {
             "error": "no_repo",
             "up_to_date": True,
-            "message": "Не указан репозиторий. В .env: UPDATE_GITHUB_REPO=user/repo",
+            "message": "Обновления не подключены (репозиторий не задан при сборке).",
         }
 
     url = "https://api.github.com/repos/%s/releases/latest" % repo
@@ -279,7 +323,11 @@ def check_github_release(repo: str = "") -> dict:
             return {"error": err, "up_to_date": True, "message": err}
 
     if not isinstance(data, dict):
-        return {"error": "bad_response", "up_to_date": True, "message": "Некорректный ответ GitHub"}
+        return {
+            "error": "bad_response",
+            "up_to_date": True,
+            "message": "Некорректный ответ GitHub",
+        }
 
     tag = (data.get("tag_name") or data.get("name") or "").strip()
     ver = tag.lstrip("vV")
@@ -330,7 +378,8 @@ def check_github_release(repo: str = "") -> dict:
         "download_url": download_url,
         "asset_name": asset_name,
         "asset_size": asset_size,
-        "message": "Доступна версия %s (сейчас %s), файл %s" % (ver, __version__, asset_name),
+        "message": "Доступна версия %s (сейчас %s), файл %s"
+        % (ver, __version__, asset_name),
     }
 
 
@@ -402,9 +451,7 @@ if not exist "%TARGET%" (
 )
 start "" "%TARGET%"
 del "%~f0" >nul 2>&1
-""".format(
-            target=target, new=new_path, bak=bak_path
-        )
+""".format(target=target, new=new_path, bak=bak_path)
         try:
             with open(bat, "w", encoding="utf-8") as f:
                 f.write(script)
@@ -448,6 +495,7 @@ def check_git_update(project_dir: str) -> Optional[dict]:
     if not project_dir or not os.path.isdir(os.path.join(project_dir, ".git")):
         return {"error": "no_git", "up_to_date": True}
     try:
+
         def run(args):
             r = subprocess.run(
                 args,

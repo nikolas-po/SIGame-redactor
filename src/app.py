@@ -2,6 +2,7 @@
 """Главное окно редактора пакетов SIGame."""
 
 import os
+import sys
 import re
 from datetime import date
 import webbrowser
@@ -31,17 +32,47 @@ import question_ui
 class SIQEditor(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Windows: своя группа в панели задач (иначе иконка Python)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "SiPak.Editor.1"
+                )
+            except Exception:
+                pass
         self.title(APP_NAME_FULL)
         self.geometry("1280x800")
+        self._set_window_icon()
+        self.minsize(960, 620)
+
+    def _set_window_icon(self):
+        """Иконка в заголовке и в панели задач Windows."""
         try:
             from utils import asset_path
-            icon = str(asset_path("logo_sipak_64.png"))
-            if os.path.isfile(icon):
-                self._icon_img = tk.PhotoImage(file=icon)
-                self.iconphoto(True, self._icon_img)
         except Exception:
-            pass
-        self.minsize(960, 620)
+            return
+        # .ico — для панели задач Windows (iconbitmap)
+        ico = asset_path("icon.ico")
+        if ico.is_file():
+            try:
+                self.iconbitmap(default=str(ico))
+                self.iconbitmap(str(ico))
+            except Exception:
+                try:
+                    self.wm_iconbitmap(str(ico))
+                except Exception:
+                    pass
+        # png — для title bar / Linux / запасной вариант
+        for name in ("logo_sipak_64.png", "logo_sipak_256.png", "logo_sipak.png"):
+            png = asset_path(name)
+            if png.is_file():
+                try:
+                    self._icon_img = tk.PhotoImage(file=str(png))
+                    self.iconphoto(True, self._icon_img)
+                    break
+                except Exception:
+                    continue
 
         self.pkg = Package()
         self.current_file = None
@@ -1067,10 +1098,24 @@ class SIQEditor(tk.Tk):
         dialogs.show_help(self)
 
     def check_updates(self):
+        try:
+            from updater import get_configured_repo
+            repo = get_configured_repo()
+        except Exception:
+            repo = ""
+        if not repo:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Обновления",
+                "Автообновление выключено.\n"
+                "Программа полностью работает и без него.\n\n"
+                "Настройка нужна только автору, если он публикует новые версии на GitHub.",
+                parent=self,
+            )
+            return
         from utils import project_root
         dialogs.check_for_updates(self, project_dir=str(project_root()))
 
     def show_about(self):
 
         dialogs.show_about(self)
-

@@ -6,15 +6,24 @@ from env_load import load_env, get as env_get
 load_env()
 
 
+# Репозиторий обновлений ВШИТ в программу (для exe .env не нужен).
+# Перед сборкой exe укажите свой: "логин/название-репо"
+BUILTIN_UPDATE_REPO = "nikolas-po/SIGame-redactor"
+
 def _reload_env_values():
-    global UPDATE_GITHUB_REPO, SIGAME_ONLINE_URL
-    UPDATE_GITHUB_REPO = env_get("UPDATE_GITHUB_REPO", "").strip()
+    """env перекрывает вшитое значение только если задан непустой UPDATE_GITHUB_REPO."""
+    global UPDATE_GITHUB_REPO, SIGAME_ONLINE_URL, UPDATE_ASSET_WIN
+    env_repo = env_get("UPDATE_GITHUB_REPO", "").strip()
+    UPDATE_GITHUB_REPO = env_repo or BUILTIN_UPDATE_REPO
     SIGAME_ONLINE_URL = env_get(
         "SIGAME_ONLINE_URL", "https://sigame.vladimirkhil.com/"
-    ).strip()
+    ).strip() or "https://sigame.vladimirkhil.com/"
+    asset = env_get("UPDATE_ASSET_WIN", "").strip()
+    if asset:
+        UPDATE_ASSET_WIN = asset
 
 
-UPDATE_GITHUB_REPO = ""
+UPDATE_GITHUB_REPO = BUILTIN_UPDATE_REPO
 SIGAME_ONLINE_URL = "https://sigame.vladimirkhil.com/"
 _reload_env_values()
 

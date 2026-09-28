@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
 import subprocess
-import webbrowser
-import urllib.request
-import urllib.parse
+import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+import urllib.parse
+import urllib.request
+import webbrowser
+from tkinter import messagebox, ttk
 
 from constants import SIGAME_ONLINE_URL
-from version import __version__
 from siq_io import user_data_dir
+from version import __version__
 
 
 def show_beginner_guide(parent):
@@ -46,10 +46,10 @@ def show_beginner_guide(parent):
     ttk.Button(win, text="Понятно, закрыть", command=win.destroy).pack(pady=10)
 
 
-
 def make_room_qr(parent, status_callback=None):
     """QR на компьютере. Ссылка + опционально PIN."""
     import threading
+
     from qr_local import make_qr_png
 
     win = tk.Toplevel(parent)
@@ -72,7 +72,9 @@ def make_room_qr(parent, status_callback=None):
     ent.pack(padx=12, fill=tk.X)
     ent.focus_set()
 
-    ttk.Label(win, text="PIN-код (необязательно):").pack(anchor="w", padx=12, pady=(8, 0))
+    ttk.Label(win, text="PIN-код (необязательно):").pack(
+        anchor="w", padx=12, pady=(8, 0)
+    )
     pin_var = tk.StringVar()
     ttk.Entry(win, textvariable=pin_var, width=20).pack(anchor="w", padx=12)
 
@@ -223,9 +225,10 @@ def make_room_qr(parent, status_callback=None):
     bf.pack(pady=8)
     btn_gen = ttk.Button(bf, text="Сделать QR", command=generate)
     btn_gen.pack(side=tk.LEFT, padx=4)
-    ttk.Button(bf, text="Папка с файлом", command=open_folder).pack(side=tk.LEFT, padx=4)
+    ttk.Button(bf, text="Папка с файлом", command=open_folder).pack(
+        side=tk.LEFT, padx=4
+    )
     ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.LEFT, padx=4)
-
 
 
 def show_host_hints(parent):
@@ -311,9 +314,7 @@ def show_about(parent):
         "СиПак — редактор пакетов SIGame\n"
         "Версия %s\n\n"
         "Текст, фото, звук, видео\n"
-        "Аукцион, кот, финал, без риска\n\n"
-        % __version__
-        + SIGAME_ONLINE_URL,
+        "Аукцион, кот, финал, без риска\n\n" % __version__ + SIGAME_ONLINE_URL,
         parent=parent,
     )
 
@@ -330,8 +331,9 @@ def soft_welcome(parent, open_guide):
 def check_for_updates(parent, project_dir=None):
     """Проверка GitHub Releases; скачивание и установка exe."""
     import tkinter as tk
-    from tkinter import ttk, messagebox
     import webbrowser
+    from tkinter import messagebox, ttk
+
     import updater
 
     win = tk.Toplevel(parent)
@@ -357,13 +359,13 @@ def check_for_updates(parent, project_dir=None):
         log("Проверка обновлений…")
         repo = updater.get_configured_repo()
         if not repo:
-            log("Репозиторий не задан.")
+            log("Автообновление не подключено при сборке.")
+            log("Программа работает как обычно.")
             log("")
-            log("Создайте файл .env рядом с программой (или в папке проекта):")
-            log("  UPDATE_GITHUB_REPO=ваш_логин/ваш_репозиторий")
-            log("")
-            log("Пример: UPDATE_GITHUB_REPO=ivan/sipak")
-            log("В GitHub: Releases → New release → прикрепите SiPak.exe")
+            log("Разработчику: в src/constants.py укажите")
+            log('  BUILTIN_UPDATE_REPO = "логин/репозиторий"')
+            log("и соберите exe снова. Либо рядом с SiPak.exe файл")
+            log("update_repo.txt с одной строкой: логин/репозиторий")
             return
         log("Репозиторий: %s" % repo)
         info = updater.check_github_release(repo)
@@ -386,7 +388,9 @@ def check_for_updates(parent, project_dir=None):
     def do_install():
         info = state.get("info") or {}
         if info.get("up_to_date") and not info.get("download_url"):
-            messagebox.showinfo("Обновления", "Уже последняя версия или нечего ставить.", parent=win)
+            messagebox.showinfo(
+                "Обновления", "Уже последняя версия или нечего ставить.", parent=win
+            )
             return
         url = info.get("download_url") or ""
         if not url:
@@ -410,7 +414,9 @@ def check_for_updates(parent, project_dir=None):
         ok, msg = updater.install_exe_update(url)
         log(msg)
         if ok:
-            if messagebox.askyesno("Готово", msg + "\n\nЗакрыть программу сейчас?", parent=win):
+            if messagebox.askyesno(
+                "Готово", msg + "\n\nЗакрыть программу сейчас?", parent=win
+            ):
                 try:
                     parent.destroy()
                 except Exception:
@@ -423,13 +429,19 @@ def check_for_updates(parent, project_dir=None):
         url = info.get("html_url") or ""
         if not url:
             repo = updater.get_configured_repo()
-            url = ("https://github.com/%s/releases" % repo) if repo else "https://github.com"
+            url = (
+                ("https://github.com/%s/releases" % repo)
+                if repo
+                else "https://github.com"
+            )
         webbrowser.open(url)
 
     bf = ttk.Frame(win)
     bf.pack(fill=tk.X, pady=8, padx=12)
     ttk.Button(bf, text="Проверить", command=do_check).pack(side=tk.LEFT, padx=4)
-    ttk.Button(bf, text="Скачать и установить", command=do_install).pack(side=tk.LEFT, padx=4)
+    ttk.Button(bf, text="Скачать и установить", command=do_install).pack(
+        side=tk.LEFT, padx=4
+    )
     ttk.Button(bf, text="Открыть релизы", command=open_page).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.RIGHT, padx=4)
     do_check()
@@ -439,18 +451,22 @@ def startup_auto_update(parent):
     """Тихая проверка релиза exe при запуске. Без репо / без сети — молча выходим."""
     import threading
     from tkinter import messagebox
+
     import updater
+
     try:
         from env_load import load_env
+
         load_env()
         from constants import _reload_env_values
+
         _reload_env_values()
     except Exception:
         pass
-    from constants import UPDATE_GITHUB_REPO
+    import updater as _upd
 
-    repo = (UPDATE_GITHUB_REPO or "").strip()
-    if not repo or "/" not in repo:
+    repo = _upd.get_configured_repo()
+    if not repo:
         return
 
     def work():
@@ -494,7 +510,9 @@ def startup_auto_update(parent):
                     except Exception:
                         pass
                 else:
-                    messagebox.showerror("Обновление", "Не удалось:\n" + text, parent=parent)
+                    messagebox.showerror(
+                        "Обновление", "Не удалось:\n" + text, parent=parent
+                    )
             else:
                 # предложить пропустить версию
                 if messagebox.askyesno(
