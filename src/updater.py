@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Автообновление релиза (exe): проверка GitHub Releases, скачивание, замена только exe.
-Данные пользователя, пакеты .siq и настройки не трогаются.
+Обновление с GitHub Releases: проверка, скачивание, замена exe.
+Пакеты .siq и данные пользователя не трогаются.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import sys
 import time
 import tempfile
 import subprocess
+import urllib.error
 import urllib.request
 from typing import Optional, Tuple
 
@@ -21,7 +22,6 @@ from constants import (
     UPDATE_ASSET_WIN,
     UPDATE_ASSET_LINUX,
     UPDATE_ASSET_MAC,
-    GITHUB_API_URL,
 )
 
 
@@ -29,16 +29,81 @@ def current_version() -> str:
     return __version__
 
 
-def _http_json(url: str, timeout: int = 12) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "SiPak-Updater/%s" % __version__,
-            "Accept": "application/vnd.github+json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def normalize_repo(repo: str) -> str:
+    """user/repo из строки, URL или git@github.com:..."""
+    s = (repo or "").strip()
+    if not s:
+        return ""
+    s = s.replace("\\", "/")
+    # https://github.com/user/repo.git
+    for prefix in (
+        "https://github.com/",
+        "http://github.com/",
+        "github.com/",
+        "git@github.com:",
+    ):
+        if s.lower().startswith(prefix) or s.startswith(prefix):
+            s = s[len(prefix) :] if s.startswith(prefix) else s[len(prefix) :]
+            break
+    # иногда вставляют полный URL API
+    if "api.github.com/repos/" in s.lower():
+        idx = s.lower().index("api.github.com/repos/") + len("api.github.com/repos/")
+        s = s[idx:]
+    s = s.strip("/")
+    if s.endswith(".git"):
+        s = s[:-4]
+    # только user/repo
+    parts = [p for p in s.split("/") if p]
+    if len(parts) >= 2:
+        return parts[0] + "/" + parts[1]
+    return ""
+
+
+def _headers() -> dict:
+    h = {
+        "User-Agent": "SiPak-Updater/%s" % __version__,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = ""
+    try:
+        from env_load import load_env, get as env_get
+
+        load_env()
+        token = (env_get("GITHUB_TOKEN") or env_get("UPDATE_GITHUB_TOKEN") or "").strip()
+    except Exception:
+        token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("UPDATE_GITHUB_TOKEN") or "").strip()
+    if token:
+        h["Authorization"] = "Bearer " + token
+    return h
+
+
+def _http_json(url: str, timeout: int = 20) -> dict:
+    req = urllib.request.Request(url, headers=_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            pass
+        if e.code == 404:
+            raise RuntimeError(
+                "404: репозиторий или релизы не найдены. "
+                "Проверьте имя (user/repo), что репозиторий публичный "
+                "и что есть хотя бы один Release на GitHub."
+            ) from e
+        if e.code == 401 or e.code == 403:
+            raise RuntimeError(
+                "GitHub отказал в доступе (%s). "
+                "Для приватного репо укажите GITHUB_TOKEN в .env" % e.code
+            ) from e
+        raise RuntimeError("GitHub HTTP %s: %s" % (e.code, body or e.reason)) from e
+    except urllib.error.URLError as e:
+        raise RuntimeError("Нет сети или GitHub недоступен: %s" % e.reason) from e
 
 
 def _parse_ver(s: str) -> Tuple[int, ...]:
@@ -66,10 +131,41 @@ def is_newer(remote: str, local: str) -> bool:
 
 def _asset_name() -> str:
     if sys.platform == "win32":
-        return UPDATE_ASSET_WIN
+        return UPDATE_ASSET_WIN or "SiPak.exe"
     if sys.platform == "darwin":
-        return UPDATE_ASSET_MAC
-    return UPDATE_ASSET_LINUX
+        return UPDATE_ASSET_MAC or "SiPak"
+    return UPDATE_ASSET_LINUX or "SiPak"
+
+
+def _pick_asset(assets: list) -> Tuple[str, str, int]:
+    """Вернёт (url, name, size). Точное имя → SiPak*.exe → любой .exe → первый файл."""
+    want = _asset_name().lower()
+    if not assets:
+        return "", "", 0
+
+    def url_of(a):
+        return a.get("browser_download_url") or "", (a.get("name") or "").strip(), int(a.get("size") or 0)
+
+    for a in assets:
+        name = (a.get("name") or "").strip()
+        if name.lower() == want:
+            return url_of(a)
+
+    for a in assets:
+        low = (a.get("name") or "").lower()
+        if "sipak" in low and low.endswith(".exe"):
+            return url_of(a)
+
+    for a in assets:
+        low = (a.get("name") or "").lower()
+        if "sipak" in low:
+            return url_of(a)
+
+    for a in assets:
+        if (a.get("name") or "").lower().endswith(".exe"):
+            return url_of(a)
+
+    return url_of(assets[0])
 
 
 def _skip_path() -> str:
@@ -108,254 +204,271 @@ def clear_skipped_if_installed(ver: str) -> None:
             pass
 
 
-def check_github_release(repo: str = "") -> Optional[dict]:
-    """
-    Только релиз с exe/бинарником.
-    up_to_date / error / данные обновления.
-    """
+def get_configured_repo() -> str:
+    """Репозиторий из .env / constants / config."""
+    repo = ""
     try:
         from env_load import load_env, get as env_get
-        load_env()
-        from constants import _reload_env_values
-        _reload_env_values()
-        from constants import UPDATE_GITHUB_REPO as _repo
-    except Exception:
-        _repo = UPDATE_GITHUB_REPO
-    repo = (repo or _repo or "").strip()
-    if not repo or "/" not in repo:
-        return {"error": "no_repo", "up_to_date": True}
 
-    url = GITHUB_API_URL.replace("{repo}", repo) if "{repo}" in GITHUB_API_URL else ("https://api.github.com/repos/%s/releases/latest" % repo)
+        load_env()
+        repo = (env_get("UPDATE_GITHUB_REPO") or "").strip()
+    except Exception:
+        pass
+    if not repo:
+        try:
+            from constants import _reload_env_values, UPDATE_GITHUB_REPO as r
+
+            _reload_env_values()
+            repo = (r or "").strip()
+        except Exception:
+            repo = (UPDATE_GITHUB_REPO or "").strip()
+    if not repo:
+        try:
+            import config
+
+            repo = (getattr(config, "UPDATE_GITHUB_REPO", "") or "").strip()
+        except Exception:
+            pass
+    return normalize_repo(repo)
+
+
+def check_github_release(repo: str = "") -> dict:
+    """
+    Проверка latest release.
+    Возвращает dict: up_to_date / error / version / download_url / ...
+    """
+    repo = normalize_repo(repo) or get_configured_repo()
+    if not repo or "/" not in repo:
+        return {
+            "error": "no_repo",
+            "up_to_date": True,
+            "message": "Не указан репозиторий. В .env: UPDATE_GITHUB_REPO=user/repo",
+        }
+
+    url = "https://api.github.com/repos/%s/releases/latest" % repo
     try:
         data = _http_json(url)
     except Exception as e:
-        return {"error": str(e), "up_to_date": True}
+        err = str(e)
+        # иногда latest нет, но есть список релизов
+        if "404" in err:
+            try:
+                lst = _http_json(
+                    "https://api.github.com/repos/%s/releases?per_page=5" % repo
+                )
+                if isinstance(lst, list) and lst:
+                    data = lst[0]
+                else:
+                    return {
+                        "error": "no_releases",
+                        "up_to_date": True,
+                        "message": (
+                            "Репозиторий «%s» найден, но релизов нет.\n"
+                            "GitHub → Releases → Create a new release\n"
+                            "и прикрепите файл SiPak.exe"
+                        )
+                        % repo,
+                    }
+            except Exception as e2:
+                return {
+                    "error": str(e2),
+                    "up_to_date": True,
+                    "message": str(e2),
+                }
+        else:
+            return {"error": err, "up_to_date": True, "message": err}
+
+    if not isinstance(data, dict):
+        return {"error": "bad_response", "up_to_date": True, "message": "Некорректный ответ GitHub"}
 
     tag = (data.get("tag_name") or data.get("name") or "").strip()
     ver = tag.lstrip("vV")
     if not ver:
-        return {"error": "no_tag", "up_to_date": True}
+        return {
+            "error": "no_tag",
+            "up_to_date": True,
+            "message": "У релиза нет номера версии (tag). Укажите tag вроде v1.0.1",
+        }
+
+    html_url = data.get("html_url") or ("https://github.com/%s/releases" % repo)
+    notes = (data.get("body") or "")[:1200]
+    assets = data.get("assets") or []
 
     if not is_newer(ver, __version__):
         return {
             "up_to_date": True,
             "version": ver,
             "tag": tag,
-            "html_url": data.get("html_url") or "",
+            "html_url": html_url,
+            "message": "У вас актуальная версия (%s)." % ver,
         }
 
-    asset_want = _asset_name().lower()
-    download_url = ""
-    asset_size = 0
-    for a in data.get("assets") or []:
-        name = (a.get("name") or "").lower()
-        if name == asset_want or name.endswith("/" + asset_want):
-            download_url = a.get("browser_download_url") or ""
-            asset_size = int(a.get("size") or 0)
-            break
-        # допускаем SiPak-windows.exe и т.п.
-        if asset_want.replace(".exe", "") in name and (
-            name.endswith(".exe") or sys.platform != "win32"
-        ):
-            download_url = a.get("browser_download_url") or ""
-            asset_size = int(a.get("size") or 0)
-            break
-
+    download_url, asset_name, asset_size = _pick_asset(assets)
     if not download_url:
+        names = ", ".join((a.get("name") or "?") for a in assets[:8]) or "(пусто)"
         return {
             "error": "no_exe_asset",
-            "up_to_date": True,
+            "up_to_date": False,
             "version": ver,
-            "html_url": data.get("html_url") or "",
+            "tag": tag,
+            "html_url": html_url,
+            "notes": notes,
+            "message": (
+                "Версия %s есть, но нет файла для скачивания.\n"
+                "В релизе прикрепите asset, например SiPak.exe\n"
+                "Сейчас в релизе: %s"
+            )
+            % (ver, names),
         }
 
     return {
         "up_to_date": False,
         "version": ver,
         "tag": tag,
-        "notes": (data.get("body") or "")[:1500],
+        "html_url": html_url,
+        "notes": notes,
         "download_url": download_url,
-        "html_url": data.get("html_url") or "",
-        "asset_name": _asset_name(),
+        "asset_name": asset_name,
         "asset_size": asset_size,
+        "message": "Доступна версия %s (сейчас %s), файл %s" % (ver, __version__, asset_name),
     }
 
 
-def download_file(url: str, dest: str, timeout: int = 180) -> None:
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "SiPak-Updater/%s" % __version__}
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = resp.read()
-    if len(data) < 1024:
-        raise ValueError("Файл обновления слишком маленький")
-    with open(dest, "wb") as f:
-        f.write(data)
-
-
-def exe_target_path() -> str:
-    """Путь к файлу программы, который заменяем (только он)."""
-    if getattr(sys, "frozen", False):
-        return os.path.abspath(sys.executable)
-    from siq_io import user_data_dir
-
-    return os.path.abspath(os.path.join(user_data_dir(), _asset_name()))
+def _download(url: str, dest: str, timeout: int = 120) -> None:
+    req = urllib.request.Request(url, headers=_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as out:
+        while True:
+            chunk = resp.read(256 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
 
 
 def install_exe_update(download_url: str) -> Tuple[bool, str]:
     """
-    Скачивает новый бинарник и планирует замену ТОЛЬКО exe после выхода.
-    Папки с .siq, настройки, временные медиа — не удаляются.
+    Скачать exe и подменить текущий (для frozen / рядом лежащий exe).
+    Безопасно: .new → bat/скрипт замены после выхода.
     """
+    if not download_url:
+        return False, "Нет ссылки для скачивания"
+
+    # куда ставим
+    if getattr(sys, "frozen", False):
+        target = sys.executable
+    else:
+        # dev: кладём SiPak.exe рядом с проектом
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        target = os.path.join(root, _asset_name())
+
+    target = os.path.abspath(target)
+    folder = os.path.dirname(target)
+    base = os.path.basename(target)
+    new_path = target + ".new"
+    bak_path = target + ".bak"
+
     try:
-        target = exe_target_path()
-        folder = os.path.dirname(target)
-        os.makedirs(folder, exist_ok=True)
+        _download(download_url, new_path)
+    except Exception as e:
+        return False, "Не удалось скачать:\n%s" % e
 
-        tmp = target + ".new"
-        bak = target + ".bak"
-        download_file(download_url, tmp)
+    if not os.path.isfile(new_path) or os.path.getsize(new_path) < 1000:
+        try:
+            os.remove(new_path)
+        except Exception:
+            pass
+        return False, "Скачанный файл слишком маленький или повреждён"
 
-        if sys.platform == "win32":
-            bat = os.path.join(folder, "_sipak_update.bat")
-            # ждём пока exe освободится, move .new → exe, старый → .bak (на всякий), старт
-            script = (
-                "@echo off\r\n"
-                "set TARGET=%s\r\n"
-                "set NEW=%s\r\n"
-                "set BAK=%s\r\n"
-                "set /a n=0\r\n"
-                ":wait\r\n"
-                "ping 127.0.0.1 -n 2 >nul\r\n"
-                "set /a n+=1\r\n"
-                'if exist "%%TARGET%%" (\r\n'
-                '  del /F /Q "%%BAK%%" 2>nul\r\n'
-                '  ren "%%TARGET%%" "%s" 2>nul\r\n'
-                ")\r\n"
-                'if exist "%%TARGET%%" if %%n%% LSS 30 goto wait\r\n'
-                'move /Y "%%NEW%%" "%%TARGET%%"\r\n'
-                'if not exist "%%TARGET%%" (\r\n'
-                '  if exist "%%BAK%%" ren "%%BAK%%" "%s"\r\n'
-                "  exit /b 1\r\n"
-                ")\r\n"
-                'start "" "%%TARGET%%"\r\n'
-                'del "%%BAK%%" 2>nul\r\n'
-                'del "%%~f0"\r\n'
-            ) % (
-                target,
-                tmp,
-                bak,
-                os.path.basename(bak),
-                os.path.basename(target),
-            )
-            with open(bat, "w", encoding="cp866", errors="replace") as f:
+    # Windows: helper bat после закрытия
+    if sys.platform == "win32":
+        bat = os.path.join(folder, "_sipak_update.bat")
+        # ждём пока процесс отпустит exe, меняем, запускаем снова
+        script = r"""@echo off
+setlocal
+set TARGET={target}
+set NEW={new}
+set BAK={bak}
+echo Updating SiPak...
+:wait
+ping -n 2 127.0.0.1 >nul
+del "%BAK%" >nul 2>&1
+move /Y "%TARGET%" "%BAK%" >nul 2>&1
+if exist "%TARGET%" goto wait
+move /Y "%NEW%" "%TARGET%" >nul 2>&1
+if not exist "%TARGET%" (
+  move /Y "%BAK%" "%TARGET%" >nul 2>&1
+  echo Restore failed
+  pause
+  exit /b 1
+)
+start "" "%TARGET%"
+del "%~f0" >nul 2>&1
+""".format(
+            target=target, new=new_path, bak=bak_path
+        )
+        try:
+            with open(bat, "w", encoding="utf-8") as f:
                 f.write(script)
             subprocess.Popen(
                 ["cmd", "/c", bat],
                 cwd=folder,
                 close_fds=True,
-                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
             )
-            return True, "Обновление готово. Программа перезапустится с новой версией."
+            clear_skipped_if_installed("")
+            return True, (
+                "Обновление подготовлено.\n"
+                "Закройте программу — файлы заменятся и СиПак запустится снова.\n"
+                "Цель: %s" % target
+            )
+        except Exception as e:
+            return False, "Не удалось запустить установщик:\n%s" % e
 
-        # Linux / macOS
-        os.chmod(tmp, 0o755)
+    # Linux / mac: replace if writable
+    try:
         if os.path.isfile(target):
             try:
-                if os.path.isfile(bak):
-                    os.remove(bak)
-                os.replace(target, bak)
-            except OSError:
+                os.replace(target, bak_path)
+            except Exception:
                 pass
-        os.replace(tmp, target)
+        os.replace(new_path, target)
         try:
-            if os.path.isfile(bak):
-                os.remove(bak)
-        except OSError:
+            os.chmod(target, 0o755)
+        except Exception:
             pass
-        return True, "Файл программы обновлён. Перезапустите СиПак."
+        return True, "Файл обновлён:\n%s\nПерезапустите программу." % target
     except Exception as e:
-        return False, str(e)
+        return False, "Не удалось заменить файл:\n%s" % e
+
+
+def install_zip_source(url: str, project_dir: str) -> Tuple[bool, str]:
+    return False, "Установка из zip исходников отключена. Используйте Release с .exe"
 
 
 def check_git_update(project_dir: str) -> Optional[dict]:
-    git_dir = os.path.join(project_dir, ".git")
-    if not os.path.isdir(git_dir):
-        return None
+    if not project_dir or not os.path.isdir(os.path.join(project_dir, ".git")):
+        return {"error": "no_git", "up_to_date": True}
     try:
-        subprocess.run(
-            ["git", "-C", project_dir, "fetch", "--quiet"],
-            check=False,
-            timeout=45,
-            capture_output=True,
-        )
-        local = subprocess.check_output(
-            ["git", "-C", project_dir, "rev-parse", "HEAD"],
-            text=True,
-            timeout=15,
-        ).strip()
-        remote = subprocess.check_output(
-            ["git", "-C", project_dir, "rev-parse", "@{u}"],
-            text=True,
-            timeout=15,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        if local != remote:
-            return {
-                "up_to_date": False,
-                "kind": "git",
-                "local": local[:8],
-                "remote": remote[:8],
-                "project_dir": project_dir,
-            }
-        return {"up_to_date": True, "kind": "git"}
+        def run(args):
+            r = subprocess.run(
+                args,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return (r.stdout or "").strip(), r.returncode
+
+        run(["git", "fetch", "origin"])
+        local, _ = run(["git", "rev-parse", "--short", "HEAD"])
+        remote, code = run(["git", "rev-parse", "--short", "origin/HEAD"])
+        if code != 0:
+            remote, code = run(["git", "rev-parse", "--short", "origin/main"])
+        if code != 0:
+            remote, code = run(["git", "rev-parse", "--short", "origin/master"])
+        if not remote:
+            return {"error": "no_remote", "up_to_date": True}
+        if local == remote:
+            return {"up_to_date": True, "local": local, "remote": remote}
+        return {"up_to_date": False, "local": local, "remote": remote}
     except Exception as e:
-        return {"error": str(e), "kind": "git"}
-
-
-def git_pull(project_dir: str) -> Tuple[bool, str]:
-    try:
-        r = subprocess.run(
-            ["git", "-C", project_dir, "pull", "--ff-only"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if r.returncode == 0:
-            return True, (r.stdout or "OK").strip()
-        return False, (r.stderr or r.stdout or "git pull failed").strip()
-    except Exception as e:
-        return False, str(e)
-
-
-def install_zip_source(download_url: str, project_dir: str) -> Tuple[bool, str]:
-    import zipfile
-    import shutil
-
-    try:
-        td = tempfile.mkdtemp(prefix="sipak_upd_")
-        zpath = os.path.join(td, "src.zip")
-        download_file(download_url, zpath)
-        with zipfile.ZipFile(zpath, "r") as zf:
-            zf.extractall(td)
-        root = None
-        for name in os.listdir(td):
-            full = os.path.join(td, name)
-            if os.path.isdir(full) and name != "__MACOSX":
-                root = full
-                break
-        if not root:
-            return False, "В архиве нет папки с кодом"
-        for dirpath, _, files in os.walk(root):
-            rel = os.path.relpath(dirpath, root)
-            dest_dir = os.path.join(project_dir, rel) if rel != "." else project_dir
-            os.makedirs(dest_dir, exist_ok=True)
-            for fn in files:
-                if fn.endswith((".pyc", ".pyo")):
-                    continue
-                shutil.copy2(os.path.join(dirpath, fn), os.path.join(dest_dir, fn))
-        shutil.rmtree(td, ignore_errors=True)
-        return True, "Исходники обновлены. Перезапустите программу."
-    except Exception as e:
-        return False, str(e)
+        return {"error": str(e), "up_to_date": True}

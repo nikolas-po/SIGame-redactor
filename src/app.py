@@ -32,7 +32,7 @@ class SIQEditor(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME_FULL)
-        self.geometry("1200x750")
+        self.geometry("1280x800")
         try:
             from utils import asset_path
             icon = str(asset_path("logo_sipak_64.png"))
@@ -217,6 +217,7 @@ class SIQEditor(tk.Tk):
         # ----- слева: дерево -----
         left = ttk.Frame(main, padding=6)
         main.add(left, weight=1)
+        # left narrow
         ttk.Label(left, text="Содержание игры", font=("", 11, "bold")).pack(anchor="w")
         ttk.Label(
             left,
@@ -280,8 +281,19 @@ class SIQEditor(tk.Tk):
             "<Configure>",
             lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
         )
-        self._canvas.create_window((0, 0), window=self.form_frame, anchor="nw")
+        self._form_window = self._canvas.create_window(
+            (0, 0), window=self.form_frame, anchor="nw"
+        )
         self._canvas.configure(yscrollcommand=scroll.set)
+
+        def _stretch_form(event):
+            # форма на всю ширину панели — поля не «узкие»
+            try:
+                self._canvas.itemconfigure(self._form_window, width=max(event.width - 4, 200))
+            except Exception:
+                pass
+
+        self._canvas.bind("<Configure>", _stretch_form)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -1022,7 +1034,11 @@ class SIQEditor(tk.Tk):
         dialogs.soft_welcome(self, self.show_beginner_guide)
 
     def _startup_update_check(self):
+        # тихо: только если задан рабочий репозиторий релизов
         try:
+            from constants import UPDATE_GITHUB_REPO
+            if not (UPDATE_GITHUB_REPO or "").strip():
+                return
             dialogs.startup_auto_update(self)
         except Exception:
             pass
@@ -1031,8 +1047,12 @@ class SIQEditor(tk.Tk):
         dialogs.show_beginner_guide(self)
 
     def show_pack_overview(self):
-        from pack_view import show_pack_overview
-        show_pack_overview(self)
+        try:
+            from pack_view import show_pack_overview
+            show_pack_overview(self)
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Все вопросы", "Не удалось открыть:\n%s" % e, parent=self)
 
     def show_sigame_lore(self):
         dialogs.show_sigame_lore(self)

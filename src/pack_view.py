@@ -37,9 +37,7 @@ def show_pack_overview(app):
     body.add(left, weight=1)
     ttk.Label(left, text="Вопросы", font=("", 11, "bold")).pack(anchor="w")
     cols = ("where", "price", "qshort")
-    tree = ttk.Treeview(
-        left, columns=cols, show="headings", selectmode="browse", height=28
-    )
+    tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse", height=28)
     tree.heading("where", text="Где")
     tree.heading("price", text="Цена")
     tree.heading("qshort", text="Вопрос")
@@ -103,11 +101,7 @@ def show_pack_overview(app):
             ln = ln.strip()
             if not ln:
                 continue
-            if (
-                ln.startswith("[фото:")
-                or ln.startswith("[звук:")
-                or ln.startswith("[видео:")
-            ):
+            if ln.startswith("[фото:") or ln.startswith("[звук:") or ln.startswith("[видео:"):
                 continue
             pure.append(ln)
         new_atoms = [Atom("text", ln) for ln in pure] if pure else [Atom("text", "")]
@@ -159,9 +153,7 @@ def show_pack_overview(app):
             tree.item(iid, values=(where, q.price, short))
         except Exception:
             pass
-        status.config(
-            text="Сохранено в пакет (нажмите «Сохранить» в главном окне для файла .siq)"
-        )
+        status.config(text="Сохранено в пакет (нажмите «Сохранить» в главном окне для файла .siq)")
         return True
 
     def schedule_save(_event=None):
@@ -234,14 +226,10 @@ def show_pack_overview(app):
                 pass
         win.destroy()
 
-    ttk.Button(
-        bot,
-        text="Обновить дерево слева",
-        command=lambda: (save_current(), app._refresh_tree()),
-    ).pack(side=tk.LEFT, padx=4)
-    ttk.Button(bot, text="Открыть в основном окне", command=open_main).pack(
+    ttk.Button(bot, text="Обновить дерево слева", command=lambda: (save_current(), app._refresh_tree())).pack(
         side=tk.LEFT, padx=4
     )
+    ttk.Button(bot, text="Открыть в основном окне", command=open_main).pack(side=tk.LEFT, padx=4)
     ttk.Button(bot, text="Закрыть", command=close).pack(side=tk.RIGHT, padx=4)
     win.protocol("WM_DELETE_WINDOW", close)
 

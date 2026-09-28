@@ -33,6 +33,11 @@ def show_beginner_guide(parent):
         "3. «Сохранить» — получится файл .siq.\n"
         "   «Играть» — откроется сайт SIGame, загрузите этот файл.\n"
         "   «Игра → QR для игроков» — код, чтобы друзья вошли в комнату.\n\n"
+        "Игра для класса (команды, ответ вслух)\n"
+        "• Команда = один вход в комнату.\n"
+        "• Жмут «Ответить» → говорят ответ вслух → ведущий судит.\n"
+        "• Если нет «Устная игра» — всё равно можно: главное кнопка и голос.\n"
+        "• Подробнее: меню «Игра» → «Шпаргалка ведущего».\n\n"
         "Не обязательно заполнять всё сразу.\n"
         "Можно открыть готовый .siq и только подправить вопросы.\n\n"
         "Если что-то неясно — меню «Помощь» → «Справка».",
@@ -242,6 +247,19 @@ def show_host_hints(parent):
         "• Комната на сайте → загрузить .siq\n"
         "• Ссылка или QR игрокам\n"
         "• Дождаться всех → Старт\n\n"
+        "КЛАСС / НЕСКОЛЬКО КОМАНД, ОТВЕТ ВСЛУХ\n"
+        "• Каждая команда — один игрок в комнате (ник «Команда 1»…)\n"
+        "• Один телефон или ноутбук на команду\n"
+        "• В правилах комнаты: «Сообщать ведущему ответы заранее» — вкл\n"
+        "• Фальстарты — лучше вкл (не жать до конца вопроса)\n"
+        "• Пункта «Устная игра» может не быть — не страшно\n"
+        "• Игроки ЖМУТ «Ответить», ответ ГОВОРЯТ ВСЛУХ\n"
+        "• Текст в поле можно не писать — судите по голосу\n"
+        "• Вы жмёте верно / неверно\n\n"
+        "Что сказать классу (30 сек)\n"
+        "«Открываем вопрос. Кто знает — жмёт Ответить.\n"
+        " Кому дали слово — говорит вслух. Я скажу верно или нет.\n"
+        " Ошибся — могут отвечать другие. Без кнопки не кричим.»\n\n"
         "ВОПРОС\n"
         "• Кто первый нажал — тот отвечает\n"
         "• Верно: +очки; неверно: −очки\n"
@@ -310,20 +328,21 @@ def soft_welcome(parent, open_guide):
 
 
 def check_for_updates(parent, project_dir=None):
-    """Проверка GitHub Releases и/или git; скачивание и установка."""
+    """Проверка GitHub Releases; скачивание и установка exe."""
     import tkinter as tk
     from tkinter import ttk, messagebox
+    import webbrowser
     import updater
 
     win = tk.Toplevel(parent)
-    win.title("Обновления")
-    win.geometry("480x420")
+    win.title("Обновления СиПак")
+    win.geometry("520x460")
     win.transient(parent)
 
     ttk.Label(win, text="Текущая версия: %s" % __version__, font=("", 11, "bold")).pack(
         anchor="w", padx=12, pady=8
     )
-    status = tk.Text(win, height=14, wrap=tk.WORD, font=("", 10))
+    status = tk.Text(win, height=16, wrap=tk.WORD, font=("", 10))
     status.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
 
     def log(msg):
@@ -335,102 +354,86 @@ def check_for_updates(parent, project_dir=None):
 
     def do_check():
         status.delete("1.0", tk.END)
-        log("Проверка…")
-        from constants import UPDATE_GITHUB_REPO
-
-        repo = (UPDATE_GITHUB_REPO or "").strip()
+        log("Проверка обновлений…")
+        repo = updater.get_configured_repo()
         if not repo:
-            log("В .env не задан UPDATE_GITHUB_REPO (вид: user/repo).")
-            log("Пока репозиторий не указан — автопроверка при запуске отключена.")
-            log("Пробую git…")
-        info = None
-        if repo:
-            info = updater.check_github_release(repo)
-            if info and info.get("error"):
-                log("GitHub: " + info["error"])
-                info = None
-            elif info and info.get("up_to_date"):
-                log("GitHub: у вас актуальная версия (%s)." % info.get("version"))
-                state["info"] = info
-                return
-            elif info:
-                log("Доступна версия %s (сейчас %s)." % (info.get("version"), __version__))
-                if info.get("notes"):
-                    log("---")
-                    log(info["notes"][:800])
-                state["info"] = info
-                return
-
-        if project_dir:
-            g = updater.check_git_update(project_dir)
-            if g and g.get("error"):
-                log("Git: " + g["error"])
-            elif g and g.get("up_to_date"):
-                log("Git: уже последняя ревизия.")
-                state["info"] = g
-            elif g and not g.get("up_to_date"):
-                log("Git: есть новые коммиты на origin (%s → %s)." % (g.get("local"), g.get("remote")))
-                state["info"] = g
-            else:
-                log("Нет .git и не задан GitHub-репозиторий.")
-                log("Укажите UPDATE_GITHUB_REPO в файле .env после публикации релизов.")
-        else:
-            log("Папка проекта не найдена.")
+            log("Репозиторий не задан.")
+            log("")
+            log("Создайте файл .env рядом с программой (или в папке проекта):")
+            log("  UPDATE_GITHUB_REPO=ваш_логин/ваш_репозиторий")
+            log("")
+            log("Пример: UPDATE_GITHUB_REPO=ivan/sipak")
+            log("В GitHub: Releases → New release → прикрепите SiPak.exe")
+            return
+        log("Репозиторий: %s" % repo)
+        info = updater.check_github_release(repo)
+        state["info"] = info
+        if not info:
+            log("Пустой ответ.")
+            return
+        if info.get("message"):
+            log(info["message"])
+        elif info.get("error"):
+            log("Ошибка: " + str(info["error"]))
+        if info.get("up_to_date") and not info.get("error"):
+            log("Всё актуально.")
+        elif not info.get("up_to_date") and info.get("download_url"):
+            log("Файл: %s" % (info.get("asset_name") or ""))
+            log("Можно нажать «Скачать и установить».")
+        if info.get("html_url") and (info.get("error") or not info.get("up_to_date")):
+            log("Страница: %s" % info["html_url"])
 
     def do_install():
-        info = state.get("info")
-        if not info or info.get("up_to_date"):
-            messagebox.showinfo("Обновления", "Сначала проверка. Или обновлений нет.", parent=win)
+        info = state.get("info") or {}
+        if info.get("up_to_date") and not info.get("download_url"):
+            messagebox.showinfo("Обновления", "Уже последняя версия или нечего ставить.", parent=win)
             return
-        if info.get("kind") == "git":
-            if not messagebox.askyesno("Git pull", "Выполнить git pull --ff-only?", parent=win):
-                return
-            ok, msg = updater.git_pull(info.get("project_dir") or project_dir)
-            log(msg)
-            if ok:
-                messagebox.showinfo("Готово", "Перезапустите программу.", parent=win)
-            else:
-                messagebox.showerror("Ошибка", msg, parent=win)
-            return
-
         url = info.get("download_url") or ""
         if not url:
             messagebox.showinfo(
-                "Ссылка",
-                "Нет файла для скачивания.\nОткройте страницу релиза в браузере.",
+                "Нет файла",
+                info.get("message")
+                or "В релизе нет SiPak.exe.\nОткройте страницу релиза и прикрепите exe.",
                 parent=win,
             )
             if info.get("html_url"):
-                import webbrowser
                 webbrowser.open(info["html_url"])
             return
-
         if not messagebox.askyesno(
             "Установить",
             "Скачать и установить версию %s?\n\n%s"
-            % (info.get("version"), url[:120]),
+            % (info.get("version"), info.get("asset_name") or url[:80]),
             parent=win,
         ):
             return
         log("Скачивание…")
-        # exe asset vs zipball
-        if url.endswith(".exe") or info.get("asset_name", "").endswith(".exe") or "releases/download" in url:
-            ok, msg = updater.install_exe_update(url)
-        else:
-            ok, msg = updater.install_zip_source(url, project_dir or os.path.dirname(__file__))
+        ok, msg = updater.install_exe_update(url)
         log(msg)
         if ok:
             if messagebox.askyesno("Готово", msg + "\n\nЗакрыть программу сейчас?", parent=win):
-                parent.destroy()
+                try:
+                    parent.destroy()
+                except Exception:
+                    pass
         else:
             messagebox.showerror("Ошибка", msg, parent=win)
+
+    def open_page():
+        info = state.get("info") or {}
+        url = info.get("html_url") or ""
+        if not url:
+            repo = updater.get_configured_repo()
+            url = ("https://github.com/%s/releases" % repo) if repo else "https://github.com"
+        webbrowser.open(url)
 
     bf = ttk.Frame(win)
     bf.pack(fill=tk.X, pady=8, padx=12)
     ttk.Button(bf, text="Проверить", command=do_check).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Скачать и установить", command=do_install).pack(side=tk.LEFT, padx=4)
+    ttk.Button(bf, text="Открыть релизы", command=open_page).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.RIGHT, padx=4)
     do_check()
+
 
 def startup_auto_update(parent):
     """Тихая проверка релиза exe при запуске. Без репо / без сети — молча выходим."""
