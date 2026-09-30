@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Локальная генерация QR без интернета."""
+"""Локальная генерация QR без интернета. Всегда даёт файл, который читает Tk."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ import os
 
 def make_qr_png(data: str, out_path: str, box_size: int = 8, border: int = 2) -> str:
     """
-    Сохраняет PNG с QR. Нужен пакет qrcode (и желательно pillow).
+    Сохраняет изображение QR.
+    Предпочтительно PNG (pillow). Иначе PPM — его понимает tk.PhotoImage.
     Возвращает путь к файлу.
     """
     data = (data or "").strip()
@@ -20,8 +21,7 @@ def make_qr_png(data: str, out_path: str, box_size: int = 8, border: int = 2) ->
         from qrcode.constants import ERROR_CORRECT_M
     except ImportError as e:
         raise ImportError(
-            "Не установлен модуль qrcode.\n"
-            "Выполните: pip install qrcode pillow"
+            "Не установлен модуль qrcode.\nВыполните: pip install qrcode pillow"
         ) from e
 
     qr = qrcode.QRCode(
@@ -33,41 +33,41 @@ def make_qr_png(data: str, out_path: str, box_size: int = 8, border: int = 2) ->
     qr.add_data(data)
     qr.make(fit=True)
 
-    # Pillow-путь (обычный)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+
+    # 1) PNG через Pillow
     try:
         img = qr.make_image(fill_color="black", back_color="white")
-        img.save(out_path)
-        if not os.path.isfile(out_path) or os.path.getsize(out_path) < 50:
-            raise OSError("файл не записался")
-        return out_path
+        png_path = out_path if out_path.lower().endswith(".png") else (os.path.splitext(out_path)[0] + ".png")
+        img.save(png_path)
+        if os.path.isfile(png_path) and os.path.getsize(png_path) > 50:
+            return png_path
     except Exception:
         pass
 
-    # без Pillow — SVG рядом, а PNG через простую матрицу в SVG
-    svg_path = os.path.splitext(out_path)[0] + ".svg"
+    # 2) PPM (P3) — всегда читается tk.PhotoImage без Pillow
     matrix = qr.get_matrix()
     n = len(matrix)
-    scale = box_size
-    pad = border * scale
+    scale = max(2, int(box_size))
+    pad = max(1, int(border)) * scale
     size = n * scale + pad * 2
-    parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">'
-        % (size, size, size, size),
-        '<rect width="100%" height="100%" fill="#ffffff"/>',
-    ]
-    for y, row in enumerate(matrix):
-        for x, cell in enumerate(row):
-            if cell:
-                parts.append(
-                    '<rect x="%d" y="%d" width="%d" height="%d" fill="#000000"/>'
-                    % (pad + x * scale, pad + y * scale, scale, scale)
-                )
-    parts.append("</svg>")
-    with open(svg_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(parts))
-    # если просили png, а получился svg — сообщим через путь
-    if out_path.lower().endswith(".png"):
-        # попытка записать хоть что-то полезное
-        return svg_path
-    return svg_path
+    ppm_path = os.path.splitext(out_path)[0] + ".ppm"
+    # строим пиксели
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            ix = (x - pad) // scale
+            iy = (y - pad) // scale
+            if 0 <= ix < n and 0 <= iy < n and matrix[iy][ix]:
+                row.append("0 0 0")
+            else:
+                row.append("255 255 255")
+        rows.append(" ".join(row))
+    with open(ppm_path, "w", encoding="ascii") as f:
+        f.write("P3\n%d %d\n255\n" % (size, size))
+        f.write("\n".join(rows))
+        f.write("\n")
+    if not os.path.isfile(ppm_path):
+        raise OSError("Не удалось записать QR")
+    return ppm_path

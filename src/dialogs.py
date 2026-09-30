@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 
 import os
-import subprocess
 import sys
-import tkinter as tk
-import urllib.parse
-import urllib.request
+import subprocess
 import webbrowser
-from tkinter import messagebox, ttk
+import urllib.request
+import urllib.parse
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 from constants import SIGAME_ONLINE_URL
-from siq_io import user_data_dir
 from version import __version__
+from siq_io import user_data_dir
 
 
 def show_beginner_guide(parent):
@@ -32,7 +32,7 @@ def show_beginner_guide(parent):
         "   Фото, звук, аукцион и «кот» — по желанию, ниже на форме.\n\n"
         "3. «Сохранить» — получится файл .siq.\n"
         "   «Играть» — откроется сайт SIGame, загрузите этот файл.\n"
-        "   «Игра → QR для игроков» — код, чтобы друзья вошли в комнату.\n\n"
+        "   «Играть» — откроется сайт и QR на SIGame для команд.\n\n"
         "Игра для класса (команды, ответ вслух)\n"
         "• Команда = один вход в комнату.\n"
         "• Жмут «Ответить» → говорят ответ вслух → ведущий судит.\n"
@@ -46,10 +46,113 @@ def show_beginner_guide(parent):
     ttk.Button(win, text="Понятно, закрыть", command=win.destroy).pack(pady=10)
 
 
+
+
+def show_play_qr(parent, pack_path="", site_url=None):
+    """QR только на сайт SIGame (не на комнату)."""
+    import threading
+    from qr_local import make_qr_png
+
+    url0 = (site_url or SIGAME_ONLINE_URL or "").strip()
+    if not url0:
+        url0 = "https://sigame.vladimirkhil.com/"
+
+    win = tk.Toplevel(parent)
+    win.title("QR — сайт SIGame")
+    win.geometry("420x520")
+    win.transient(parent)
+
+    ttk.Label(
+        win,
+        text="Команды сканируют код и открывают сайт SIGame.",
+        font=("", 11),
+        wraplength=380,
+    ).pack(anchor="w", padx=14, pady=(12, 4))
+
+    if pack_path:
+        ttk.Label(
+            win,
+            text="Пакет для ведущего:\n%s" % pack_path,
+            wraplength=380,
+            foreground="#444",
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=14, pady=4)
+
+    ttk.Label(win, text=url0, foreground="#0d47a1", wraplength=380).pack(
+        anchor="w", padx=14, pady=2
+    )
+
+    status_lbl = ttk.Label(win, text="Создаю QR…")
+    status_lbl.pack(anchor="w", padx=14, pady=4)
+    img_label = ttk.Label(win)
+    img_label.pack(pady=10)
+    state = {"photo": None}
+
+    def finish_ok(path):
+        photo = None
+        err = ""
+        # 1) tk.PhotoImage — PNG/PPM/GIF
+        try:
+            photo = tk.PhotoImage(file=path)
+            # уменьшим, если слишком большой
+            try:
+                w, h = photo.width(), photo.height()
+                if w > 300 or h > 300:
+                    factor = max(1, max(w, h) // 280)
+                    if factor > 1:
+                        photo = photo.subsample(factor, factor)
+            except Exception:
+                pass
+        except Exception as e1:
+            err = str(e1)
+            # 2) Pillow
+            try:
+                from PIL import Image, ImageTk
+                im = Image.open(path)
+                im.thumbnail((280, 280))
+                photo = ImageTk.PhotoImage(im)
+            except Exception as e2:
+                err = "%s / %s" % (e1, e2)
+        if photo is not None:
+            state["photo"] = photo
+            img_label.configure(image=state["photo"], text="")
+            status_lbl.config(text="Готово — покажите командам")
+        else:
+            img_label.configure(
+                text="QR сохранён, но картинка не открылась.\n%s\n%s" % (path, err)
+            )
+            status_lbl.config(text="Файл есть — откройте его вручную")
+
+    def finish_fail(err):
+        status_lbl.config(text="Ошибка QR")
+        messagebox.showerror(
+            "QR",
+            "Не удалось создать QR.\n%s\n\npip install qrcode pillow" % err,
+            parent=win,
+        )
+
+    def worker():
+        try:
+            out_path = os.path.join(user_data_dir(), "qr_sigame_site.png")
+            result = make_qr_png(url0, out_path)
+            win.after(0, lambda: finish_ok(result))
+        except Exception as e:
+            msg = str(e)
+            win.after(0, lambda m=msg: finish_fail(m))
+
+    bf = ttk.Frame(win)
+    bf.pack(fill=tk.X, padx=14, pady=10)
+    ttk.Button(bf, text="Открыть сайт", command=lambda: webbrowser.open(url0)).pack(
+        side=tk.LEFT, padx=4
+    )
+    ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.RIGHT, padx=4)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def make_room_qr(parent, status_callback=None):
     """QR на компьютере. Ссылка + опционально PIN."""
     import threading
-
     from qr_local import make_qr_png
 
     win = tk.Toplevel(parent)
@@ -72,9 +175,7 @@ def make_room_qr(parent, status_callback=None):
     ent.pack(padx=12, fill=tk.X)
     ent.focus_set()
 
-    ttk.Label(win, text="PIN-код (необязательно):").pack(
-        anchor="w", padx=12, pady=(8, 0)
-    )
+    ttk.Label(win, text="PIN-код (необязательно):").pack(anchor="w", padx=12, pady=(8, 0))
     pin_var = tk.StringVar()
     ttk.Entry(win, textvariable=pin_var, width=20).pack(anchor="w", padx=12)
 
@@ -225,10 +326,9 @@ def make_room_qr(parent, status_callback=None):
     bf.pack(pady=8)
     btn_gen = ttk.Button(bf, text="Сделать QR", command=generate)
     btn_gen.pack(side=tk.LEFT, padx=4)
-    ttk.Button(bf, text="Папка с файлом", command=open_folder).pack(
-        side=tk.LEFT, padx=4
-    )
+    ttk.Button(bf, text="Папка с файлом", command=open_folder).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
 
 
 def show_host_hints(parent):
@@ -314,7 +414,9 @@ def show_about(parent):
         "СиПак — редактор пакетов SIGame\n"
         "Версия %s\n\n"
         "Текст, фото, звук, видео\n"
-        "Аукцион, кот, финал, без риска\n\n" % __version__ + SIGAME_ONLINE_URL,
+        "Аукцион, кот, финал, без риска\n\n"
+        % __version__
+        + SIGAME_ONLINE_URL,
         parent=parent,
     )
 
@@ -331,9 +433,8 @@ def soft_welcome(parent, open_guide):
 def check_for_updates(parent, project_dir=None):
     """Проверка GitHub Releases; скачивание и установка exe."""
     import tkinter as tk
+    from tkinter import ttk, messagebox
     import webbrowser
-    from tkinter import messagebox, ttk
-
     import updater
 
     win = tk.Toplevel(parent)
@@ -388,9 +489,7 @@ def check_for_updates(parent, project_dir=None):
     def do_install():
         info = state.get("info") or {}
         if info.get("up_to_date") and not info.get("download_url"):
-            messagebox.showinfo(
-                "Обновления", "Уже последняя версия или нечего ставить.", parent=win
-            )
+            messagebox.showinfo("Обновления", "Уже последняя версия или нечего ставить.", parent=win)
             return
         url = info.get("download_url") or ""
         if not url:
@@ -414,9 +513,7 @@ def check_for_updates(parent, project_dir=None):
         ok, msg = updater.install_exe_update(url)
         log(msg)
         if ok:
-            if messagebox.askyesno(
-                "Готово", msg + "\n\nЗакрыть программу сейчас?", parent=win
-            ):
+            if messagebox.askyesno("Готово", msg + "\n\nЗакрыть программу сейчас?", parent=win):
                 try:
                     parent.destroy()
                 except Exception:
@@ -429,19 +526,13 @@ def check_for_updates(parent, project_dir=None):
         url = info.get("html_url") or ""
         if not url:
             repo = updater.get_configured_repo()
-            url = (
-                ("https://github.com/%s/releases" % repo)
-                if repo
-                else "https://github.com"
-            )
+            url = ("https://github.com/%s/releases" % repo) if repo else "https://github.com"
         webbrowser.open(url)
 
     bf = ttk.Frame(win)
     bf.pack(fill=tk.X, pady=8, padx=12)
     ttk.Button(bf, text="Проверить", command=do_check).pack(side=tk.LEFT, padx=4)
-    ttk.Button(bf, text="Скачать и установить", command=do_install).pack(
-        side=tk.LEFT, padx=4
-    )
+    ttk.Button(bf, text="Скачать и установить", command=do_install).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Открыть релизы", command=open_page).pack(side=tk.LEFT, padx=4)
     ttk.Button(bf, text="Закрыть", command=win.destroy).pack(side=tk.RIGHT, padx=4)
     do_check()
@@ -451,20 +542,15 @@ def startup_auto_update(parent):
     """Тихая проверка релиза exe при запуске. Без репо / без сети — молча выходим."""
     import threading
     from tkinter import messagebox
-
     import updater
-
     try:
         from env_load import load_env
-
         load_env()
         from constants import _reload_env_values
-
         _reload_env_values()
     except Exception:
         pass
     import updater as _upd
-
     repo = _upd.get_configured_repo()
     if not repo:
         return
@@ -510,9 +596,7 @@ def startup_auto_update(parent):
                     except Exception:
                         pass
                 else:
-                    messagebox.showerror(
-                        "Обновление", "Не удалось:\n" + text, parent=parent
-                    )
+                    messagebox.showerror("Обновление", "Не удалось:\n" + text, parent=parent)
             else:
                 # предложить пропустить версию
                 if messagebox.askyesno(
