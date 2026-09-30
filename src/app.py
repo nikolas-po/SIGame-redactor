@@ -202,7 +202,6 @@ class SIQEditor(tk.Tk):
 
         m_play = tk.Menu(menubar, tearoff=0)
         m_play.add_command(label="Играть на сайте", command=self.play_online)
-        m_play.add_command(label="QR для игроков", command=self.make_room_qr)
         m_play.add_command(label="Шпаргалка ведущего", command=self.show_host_hints)
         menubar.add_cascade(label="Игра", menu=m_play)
 
@@ -977,6 +976,7 @@ class SIQEditor(tk.Tk):
             messagebox.showerror("Не удалось сохранить", str(e), parent=self)
 
     def play_online(self):
+        """Сохранить пакет, открыть SIGame и показать QR для команд."""
         if not self._check_package(for_play=True):
             return
         path = self.current_file
@@ -993,17 +993,20 @@ class SIQEditor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Не удалось сохранить", str(e), parent=self)
             return
-        webbrowser.open(SIGAME_ONLINE_URL)
-        messagebox.showinfo(
-            "Игра",
-            "Пакет сохранён:\n%s\n\n"
-            "На сайте: создать игру → пакет «Из файла» → выберите этот .siq\n\n%s"
-            % (path, SIGAME_ONLINE_URL),
-            parent=self,
-        )
-
-
-
+        try:
+            webbrowser.open(SIGAME_ONLINE_URL)
+        except Exception:
+            pass
+        self.status.config(text="Сайт SIGame + QR. Пакет: %s" % path)
+        try:
+            dialogs.show_play_qr(self, pack_path=path, site_url=SIGAME_ONLINE_URL)
+        except Exception as e:
+            messagebox.showinfo(
+                "Играть",
+                "Сайт SIGame открыт.\nПакет:\n%s\n\nQR не показался: %s"
+                % (path, e),
+                parent=self,
+            )
 
 
     def _mark_dirty(self):
