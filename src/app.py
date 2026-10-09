@@ -1122,3 +1122,4 @@ class SIQEditor(tk.Tk):
     def show_about(self):
 
         dialogs.show_about(self)
+

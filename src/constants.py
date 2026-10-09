@@ -8,7 +8,7 @@ load_env()
 
 # Репозиторий обновлений ВШИТ в программу (для exe .env не нужен).
 # Перед сборкой exe укажите свой: "логин/название-репо"
-BUILTIN_UPDATE_REPO = "nikolas-po/SIGame-redactor"
+BUILTIN_UPDATE_REPO = ""
 
 def _reload_env_values():
     """env перекрывает вшитое значение только если задан непустой UPDATE_GITHUB_REPO."""

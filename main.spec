@@ -25,6 +25,7 @@ a = Analysis(
         'qr_local',
         'env_load',
         'utils',
+        'pack_view',
         'qrcode',
         'qrcode.image.pil',
         'PIL',

@@ -19,10 +19,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "SiPak.Editor.1"
-            )
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SiPak.Editor.1")
         except Exception:
             pass
 

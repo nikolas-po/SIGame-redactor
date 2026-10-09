@@ -65,6 +65,54 @@ def prune_media_files(pkg):
 VARIANT_MARK_RE = __import__("re").compile(r"^\[(.+)\]$")
 
 
+TYPE_LEAD_LABELS = {
+    "auction": "АУКЦИОН",
+    "cat": "КОТ В МЕШКЕ",
+    "bagcat": "КОТ В МЕШКЕ",
+    "sponsored": "БЕЗ РИСКА (×2)",
+}
+MOD_LEAD_PREFIX = "Модификаторы:"
+
+
+def _question_lead_atoms(q):
+    """Атомы в НАЧАЛО сценария: тип и модификаторы (чтобы в игре шли первыми)."""
+    leads = []
+    qtype = getattr(q, "qtype", None) or "simple"
+    if qtype in TYPE_LEAD_LABELS:
+        leads.append(Atom("say", TYPE_LEAD_LABELS[qtype]))
+    mods = []
+    if getattr(q, "mod_partial", False):
+        mods.append("близкий ответ ок")
+    if getattr(q, "mod_no_penalty", False):
+        mods.append("без штрафа")
+    if getattr(q, "mod_host_choice", False):
+        mods.append("выбор варианта ведущим")
+    if getattr(q, "mod_timer_sec", 0):
+        mods.append("таймер %s с" % q.mod_timer_sec)
+    note = (getattr(q, "mod_note", None) or "").strip()
+    if note:
+        mods.append(note)
+    if mods:
+        leads.append(Atom("say", MOD_LEAD_PREFIX + " " + "; ".join(mods)))
+    return leads
+
+
+def _strip_lead_atoms(atoms):
+    """Убрать с начала сценария наши служебные реплики при загрузке."""
+    atoms = list(atoms or [])
+    while atoms:
+        a = atoms[0]
+        if a.atype != "say":
+            break
+        val = (a.value or "").strip()
+        if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
+            atoms.pop(0)
+            continue
+        break
+    return atoms
+
+
+
 def _split_variants_from_atoms(atoms):
     """Восстанавливает варианты из сценария с метками [Имя]."""
     if not atoms:
@@ -176,6 +224,9 @@ def package_to_xml(pkg):
                             p.text = knows
 
                 sc = ET.SubElement(q_el, "{%s}scenario" % NS)
+                # Сначала тип и модификаторы — в игре покажутся до текста вопроса
+                for lead in _question_lead_atoms(q):
+                    _write_atom(sc, lead)
                 variants = getattr(q, "variants", None) or []
                 if variants and len(variants) > 1:
                     for vi, v in enumerate(variants):
@@ -377,6 +428,8 @@ def _parse_question(q_el, pkg, media_extract_dir):
                     q.atoms.append(atom)
             if not q.atoms:
                 q.atoms = [Atom("text", "")]
+            # служебные реплики типа/модификаторов с начала — не дублировать в редакторе
+            q.atoms = _strip_lead_atoms(q.atoms)
             try:
                 q.variants = _split_variants_from_atoms(list(q.atoms))
                 if q.variants:

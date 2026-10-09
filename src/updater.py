@@ -8,21 +8,21 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
-import tempfile
 import time
+import tempfile
+import subprocess
 import urllib.error
 import urllib.request
 from typing import Optional, Tuple
 
+from version import __version__
 from constants import (
+    UPDATE_GITHUB_REPO,
+    UPDATE_ASSET_WIN,
     UPDATE_ASSET_LINUX,
     UPDATE_ASSET_MAC,
-    UPDATE_ASSET_WIN,
-    UPDATE_GITHUB_REPO,
 )
-from version import __version__
 
 
 def current_version() -> str:
@@ -67,19 +67,12 @@ def _headers() -> dict:
     }
     token = ""
     try:
-        from env_load import get as env_get
-        from env_load import load_env
+        from env_load import load_env, get as env_get
 
         load_env()
-        token = (
-            env_get("GITHUB_TOKEN") or env_get("UPDATE_GITHUB_TOKEN") or ""
-        ).strip()
+        token = (env_get("GITHUB_TOKEN") or env_get("UPDATE_GITHUB_TOKEN") or "").strip()
     except Exception:
-        token = (
-            os.environ.get("GITHUB_TOKEN")
-            or os.environ.get("UPDATE_GITHUB_TOKEN")
-            or ""
-        ).strip()
+        token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("UPDATE_GITHUB_TOKEN") or "").strip()
     if token:
         h["Authorization"] = "Bearer " + token
     return h
@@ -151,11 +144,7 @@ def _pick_asset(assets: list) -> Tuple[str, str, int]:
         return "", "", 0
 
     def url_of(a):
-        return (
-            a.get("browser_download_url") or "",
-            (a.get("name") or "").strip(),
-            int(a.get("size") or 0),
-        )
+        return a.get("browser_download_url") or "", (a.get("name") or "").strip(), int(a.get("size") or 0)
 
     for a in assets:
         name = (a.get("name") or "").strip()
@@ -259,8 +248,7 @@ def get_configured_repo() -> str:
 
     # 3) .env только если явно задан (не обязателен)
     try:
-        from env_load import get as env_get
-        from env_load import load_env
+        from env_load import load_env, get as env_get
 
         load_env()
         env_repo = (env_get("UPDATE_GITHUB_REPO") or "").strip()
@@ -323,11 +311,7 @@ def check_github_release(repo: str = "") -> dict:
             return {"error": err, "up_to_date": True, "message": err}
 
     if not isinstance(data, dict):
-        return {
-            "error": "bad_response",
-            "up_to_date": True,
-            "message": "Некорректный ответ GitHub",
-        }
+        return {"error": "bad_response", "up_to_date": True, "message": "Некорректный ответ GitHub"}
 
     tag = (data.get("tag_name") or data.get("name") or "").strip()
     ver = tag.lstrip("vV")
@@ -378,8 +362,7 @@ def check_github_release(repo: str = "") -> dict:
         "download_url": download_url,
         "asset_name": asset_name,
         "asset_size": asset_size,
-        "message": "Доступна версия %s (сейчас %s), файл %s"
-        % (ver, __version__, asset_name),
+        "message": "Доступна версия %s (сейчас %s), файл %s" % (ver, __version__, asset_name),
     }
 
 
@@ -451,7 +434,9 @@ if not exist "%TARGET%" (
 )
 start "" "%TARGET%"
 del "%~f0" >nul 2>&1
-""".format(target=target, new=new_path, bak=bak_path)
+""".format(
+            target=target, new=new_path, bak=bak_path
+        )
         try:
             with open(bat, "w", encoding="utf-8") as f:
                 f.write(script)
@@ -495,7 +480,6 @@ def check_git_update(project_dir: str) -> Optional[dict]:
     if not project_dir or not os.path.isdir(os.path.join(project_dir, ".git")):
         return {"error": "no_git", "up_to_date": True}
     try:
-
         def run(args):
             r = subprocess.run(
                 args,

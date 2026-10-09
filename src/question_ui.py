@@ -51,7 +51,7 @@ class QuestionFormBuilder:
     def build(self):
         q = self.q
 
-        # 1. Тип
+        # 1. Тип вопроса (сразу видно: обычный / аукцион / кот…)
         tf = ttk.LabelFrame(self.form, text="1. Тип вопроса", padding=8)
         tf.pack(fill=tk.X, pady=4)
         self.widgets.append(tf)
@@ -69,7 +69,7 @@ class QuestionFormBuilder:
         )
         self.type_help.pack(fill=tk.X, pady=(8, 4))
 
-        # кот ДО _on_type_change
+        # кот сразу под типом
         self.cat_frame = ttk.LabelFrame(self.form, text="Настройки «Кота»", padding=6)
         self.widgets.append(self.cat_frame)
         self._entry(self.cat_frame, "Секретная тема", "secret_theme", q.secret_theme or "")
@@ -86,14 +86,32 @@ class QuestionFormBuilder:
         )
         self._on_type_change()
 
-        # 2. Цена
-        pf = ttk.LabelFrame(self.form, text="2. Цена", padding=6)
+        # 2. Модификаторы — сразу после типа, до текста вопроса
+        nf = ttk.LabelFrame(self.form, text="2. Модификаторы", padding=6)
+        nf.pack(fill=tk.X, pady=4)
+        self.widgets.append(nf)
+        self.mod_frame = nf
+        self.mod_partial = tk.BooleanVar(value=bool(q.mod_partial))
+        self.mod_no_penalty = tk.BooleanVar(value=bool(q.mod_no_penalty))
+        self.mod_host_choice = tk.BooleanVar(value=bool(getattr(q, "mod_host_choice", False)))
+        for text, var in [
+            ("Можно принять близкий ответ", self.mod_partial),
+            ("Без штрафа за ошибку", self.mod_no_penalty),
+            ("Ведущий выбирает вариант показа", self.mod_host_choice),
+        ]:
+            ttk.Checkbutton(nf, text=text, variable=var, command=self._schedule_auto).pack(anchor="w")
+        self._entry(nf, "Таймер, сек (0 = как в игре)", "mod_timer_sec", getattr(q, "mod_timer_sec", 0) or 0)
+        self._entry(nf, "Заметка-модификатор", "mod_note", getattr(q, "mod_note", "") or "")
+        self._entry(nf, "Комментарий ведущему", "comment", q.comment or "", multi=True)
+
+        # 3. Цена
+        pf = ttk.LabelFrame(self.form, text="3. Цена", padding=6)
         pf.pack(fill=tk.X, pady=4)
         self.widgets.append(pf)
         self._entry(pf, "Очки", "price", q.price)
 
-        # 3. Текст вопроса — главное поле, правим прямо здесь
-        qf = ttk.LabelFrame(self.form, text="3. Текст вопроса (пишите прямо здесь)", padding=6)
+        # 4. Текст вопроса
+        qf = ttk.LabelFrame(self.form, text="4. Текст вопроса (пишите прямо здесь)", padding=6)
         qf.pack(fill=tk.BOTH, expand=True, pady=4)
         self.widgets.append(qf)
         self.q_body = tk.Text(qf, height=8, wrap=tk.WORD, font=("", 12), undo=True)
@@ -122,7 +140,7 @@ class QuestionFormBuilder:
         # 4. Ответы — прямо в поле
         af = ttk.LabelFrame(
             self.form,
-            text="4. Правильные ответы (каждый с новой строки)",
+            text="5. Правильные ответы (каждый с новой строки)",
             padding=6,
         )
         af.pack(fill=tk.X, pady=4)
@@ -139,19 +157,6 @@ class QuestionFormBuilder:
         self.wrong_body.insert("1.0", "\n".join(q.wrong or []))
         self.wrong_body.bind("<KeyRelease>", lambda e: self._schedule_auto())
         self.wrong_body.bind("<FocusOut>", lambda e: self._auto_apply())
-
-        # заметки
-        nf = ttk.LabelFrame(self.form, text="Заметки ведущему (по желанию)", padding=6)
-        nf.pack(fill=tk.X, pady=4)
-        self.widgets.append(nf)
-        self.mod_partial = tk.BooleanVar(value=bool(q.mod_partial))
-        self.mod_no_penalty = tk.BooleanVar(value=bool(q.mod_no_penalty))
-        for text, var in [
-            ("Можно принять близкий ответ", self.mod_partial),
-            ("Без штрафа за ошибку", self.mod_no_penalty),
-        ]:
-            ttk.Checkbutton(nf, text=text, variable=var, command=self._schedule_auto).pack(anchor="w")
-        self._entry(nf, "Комментарий", "comment", q.comment or "", multi=True)
 
         bf = ttk.Frame(self.form)
         bf.pack(fill=tk.X, pady=8)
@@ -173,11 +178,21 @@ class QuestionFormBuilder:
             return
         try:
             if self.type_var.get() in ("cat", "bagcat"):
-                self.cat_frame.pack(fill=tk.X, pady=4, after=self.type_frame)
+                # кот сразу после типа, перед модификаторами
+                if getattr(self, "mod_frame", None):
+                    self.cat_frame.pack(fill=tk.X, pady=4, after=self.type_frame, before=self.mod_frame)
+                else:
+                    self.cat_frame.pack(fill=tk.X, pady=4, after=self.type_frame)
             else:
                 self.cat_frame.pack_forget()
         except Exception:
-            pass
+            try:
+                if self.type_var.get() in ("cat", "bagcat"):
+                    self.cat_frame.pack(fill=tk.X, pady=4, after=self.type_frame)
+                else:
+                    self.cat_frame.pack_forget()
+            except Exception:
+                pass
 
     def _entry(self, parent, label, key, value, multi=False):
         row = ttk.Frame(parent)
@@ -294,6 +309,12 @@ class QuestionFormBuilder:
         q.cat_knows = {"до передачи": "before", "после": "after", "никогда": "never"}.get(knows, "before")
         q.mod_partial = bool(self.mod_partial.get())
         q.mod_no_penalty = bool(self.mod_no_penalty.get())
+        q.mod_host_choice = bool(self.mod_host_choice.get())
+        try:
+            q.mod_timer_sec = int(self._get("mod_timer_sec") or 0)
+        except ValueError:
+            q.mod_timer_sec = 0
+        q.mod_note = self._get("mod_note")
 
     def _schedule_auto(self):
         if self._auto_job:

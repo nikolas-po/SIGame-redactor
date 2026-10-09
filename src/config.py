@@ -12,7 +12,8 @@ APP_EXE_NAME = "SiPak"
 SIGAME_ONLINE_URL = "https://sigame.vladimirkhil.com/"
 
 # Обновления: "user/repo" на GitHub Releases, пусто = выкл
-UPDATE_GITHUB_REPO = ""
+BUILTIN_UPDATE_REPO = ""
+UPDATE_GITHUB_REPO = BUILTIN_UPDATE_REPO
 UPDATE_ASSET_WIN = "SiPak.exe"
 UPDATE_ASSET_LINUX = "SiPak"
 UPDATE_ASSET_MAC = "SiPak"
