@@ -71,6 +71,12 @@ TYPE_LEAD_LABELS = {
     "bagcat": "КОТ В МЕШКЕ",
     "sponsored": "БЕЗ РИСКА (×2)",
 }
+TYPE_LEAD_HINTS = {
+    "auction": "Игроки повышают ставку. Отвечает назвавший наибольшую.",
+    "cat": "Выберите, кому передать вопрос (не себе). Затем ответит этот игрок.",
+    "bagcat": "Можно оставить себе или передать другому.",
+    "sponsored": "За верный ответ — двойная стоимость. За ошибку очки не снимаются.",
+}
 MOD_LEAD_PREFIX = "Модификаторы:"
 
 
@@ -90,88 +96,93 @@ def _mod_phrases(q):
     return mods
 
 
-def _lead_header(q):
-    """Только уникальный тип клетки на экран. Мягкие модификаторы — в комментарии ведущему."""
-    parts = []
+def _type_intro_text(q):
+    """Первый экран: тип + тема + короткое пояснение. Без текста вопроса."""
     qtype = getattr(q, "qtype", None) or "simple"
-    if qtype in TYPE_LEAD_LABELS:
-        parts.append("«" + TYPE_LEAD_LABELS[qtype] + "»")
-        if qtype in ("cat", "bagcat") and getattr(q, "secret_theme", None):
-            parts.append("Тема: " + str(q.secret_theme))
-    # НЕ пишем «Модификаторы: близкий ответ» в сценарий — это не для игроков
-    return "\n".join(parts)
+    if qtype not in TYPE_LEAD_LABELS:
+        return ""
+    lines = ["«" + TYPE_LEAD_LABELS[qtype] + "»"]
+    if qtype in ("cat", "bagcat"):
+        theme = (getattr(q, "secret_theme", None) or "").strip()
+        if theme:
+            lines.append("Тема: " + theme)
+    hint = TYPE_LEAD_HINTS.get(qtype)
+    if hint:
+        lines.append(hint)
+    return "\n".join(lines)
 
 
-def _inject_header_into_atoms(q, atoms):
-    """Вшить заголовок типа/модификатора в начало первого text — так он точно первый в игре."""
+def _strip_injected_headers(text):
+    """Убрать из текста вопроса старые заголовки типа/темы."""
+    if not text:
+        return text
+    lines = text.splitlines()
+    while lines:
+        s = lines[0].strip()
+        if not s:
+            lines.pop(0)
+            continue
+        if s in TYPE_LEAD_LABELS.values() or (s.startswith("«") and s.endswith("»")):
+            lines.pop(0)
+            continue
+        if s.startswith("Тема:"):
+            lines.pop(0)
+            continue
+        if s.startswith(MOD_LEAD_PREFIX):
+            lines.pop(0)
+            continue
+        if s in TYPE_LEAD_HINTS.values():
+            lines.pop(0)
+            continue
+        # старые длинные подсказки
+        if s.startswith("Игроки повышают") or s.startswith("Выберите, кому") or s.startswith("Можно оставить"):
+            lines.pop(0)
+            continue
+        if s.startswith("За верный ответ"):
+            lines.pop(0)
+            continue
+        break
+    return "\n".join(lines).strip()
+
+
+def _body_atoms(q, atoms):
+    """Атомы самого вопроса (без заголовка типа). Фото и текст — как есть."""
     from models import Atom
     atoms = [a.copy() for a in (atoms or [])]
-    header = _lead_header(q)
-    if not header:
-        return atoms
-    # убрать старые служебные say
-    cleaned = []
-    for a in atoms:
-        if a.atype == "say":
-            val = (a.value or "").strip()
-            if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
-                continue
-            if val.startswith("«") and any(v in val for v in TYPE_LEAD_LABELS.values()):
-                continue
-        cleaned.append(a)
-    atoms = cleaned
-    # если первый text уже с заголовком — не дублировать
+    out = []
     for a in atoms:
         if a.atype in ("text", "say") and a.value:
-            v = a.value.lstrip()
-            if any(v.startswith("«" + lab) or v.startswith(lab) for lab in TYPE_LEAD_LABELS.values()):
-                return atoms
-            if v.startswith(MOD_LEAD_PREFIX):
-                return atoms
-            break
-    # вставить: предпочтительно в начало первого text; иначе новый text в начало
-    for i, a in enumerate(atoms):
-        if a.atype == "text":
-            body = (a.value or "").lstrip()
-            a.value = header + "\n\n" + body if body else header
-            return atoms
-    return [Atom("text", header)] + atoms
+            cleaned = _strip_injected_headers(a.value)
+            if not cleaned and a.atype == "text":
+                continue
+            a.value = cleaned
+            if a.atype == "say":
+                val = (cleaned or "").strip()
+                if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
+                    continue
+        out.append(a)
+    if not out:
+        out = [Atom("text", "")]
+    return out
 
 
 def _question_lead_atoms(q):
-    """Больше не пишем отдельные say — заголовок вшит в text через _inject_header_into_atoms."""
     return []
 
 
 def _strip_lead_atoms(atoms):
-    """При загрузке убрать служебный заголовок из начала text/say."""
+    """При загрузке: убрать служебный первый text с типом; почистить заголовки в text."""
+    from models import Atom
     atoms = list(atoms or [])
-    while atoms:
-        a = atoms[0]
-        if a.atype == "say":
-            val = (a.value or "").strip()
-            if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
-                atoms.pop(0)
-                continue
-            break
+    # убрать ведущий intro, если совпадает с шаблоном типа
+    if atoms and atoms[0].atype in ("text", "say") and atoms[0].value:
+        v = atoms[0].value.strip()
+        first = v.splitlines()[0].strip() if v else ""
+        if first.startswith("«") and any(lab in first for lab in TYPE_LEAD_LABELS.values()):
+            atoms = atoms[1:]
+    for a in atoms:
         if a.atype == "text" and a.value:
-            lines = a.value.splitlines()
-            # снять ведущие строки-заголовки
-            while lines:
-                s = lines[0].strip()
-                if not s:
-                    lines.pop(0)
-                    continue
-                if s in TYPE_LEAD_LABELS.values() or (s.startswith("«") and s.endswith("»")):
-                    lines.pop(0)
-                    continue
-                if s.startswith("Тема:") or s.startswith(MOD_LEAD_PREFIX):
-                    lines.pop(0)
-                    continue
-                break
-            a.value = "\n".join(lines).lstrip("\n")
-            break
-        break
+            a.value = _strip_injected_headers(a.value)
     return atoms
 
 
@@ -287,21 +298,23 @@ def package_to_xml(pkg):
                             p.text = knows
 
                 sc = ET.SubElement(q_el, "{%s}scenario" % NS)
+                # 1) Сначала тип + тема + пояснение (отдельный экран)
+                intro = _type_intro_text(q)
+                if intro:
+                    _write_atom(sc, Atom("text", intro))
+                # 2) Потом тело: фото и вопрос (подряд = вместе по возможности)
                 variants = getattr(q, "variants", None) or []
                 if variants and len(variants) > 1:
                     for vi, v in enumerate(variants):
                         label = (v.get("name") or ("Вариант %d" % (vi + 1))).strip()
                         _write_atom(sc, Atom("say", "[%s]" % label))
-                        atoms = _inject_header_into_atoms(q, v.get("atoms") or [Atom("text", "")])
-                        for atom in atoms:
+                        for atom in _body_atoms(q, v.get("atoms") or [Atom("text", "")]):
                             _write_atom(sc, atom)
                 elif variants and len(variants) == 1:
-                    atoms = _inject_header_into_atoms(q, variants[0].get("atoms") or [Atom("text", "")])
-                    for atom in atoms:
+                    for atom in _body_atoms(q, variants[0].get("atoms") or [Atom("text", "")]):
                         _write_atom(sc, atom)
                 else:
-                    atoms = _inject_header_into_atoms(q, q.atoms if q.atoms else [Atom("text", "")])
-                    for atom in atoms:
+                    for atom in _body_atoms(q, q.atoms if q.atoms else [Atom("text", "")]):
                         _write_atom(sc, atom)
                 if q.answer_atoms:
                     ET.SubElement(sc, "{%s}atom" % NS, {"type": "marker"})
