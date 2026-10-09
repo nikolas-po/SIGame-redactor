@@ -74,12 +74,7 @@ TYPE_LEAD_LABELS = {
 MOD_LEAD_PREFIX = "Модификаторы:"
 
 
-def _question_lead_atoms(q):
-    """Атомы в НАЧАЛО сценария: тип и модификаторы (чтобы в игре шли первыми)."""
-    leads = []
-    qtype = getattr(q, "qtype", None) or "simple"
-    if qtype in TYPE_LEAD_LABELS:
-        leads.append(Atom("say", TYPE_LEAD_LABELS[qtype]))
+def _mod_phrases(q):
     mods = []
     if getattr(q, "mod_partial", False):
         mods.append("близкий ответ ок")
@@ -92,22 +87,90 @@ def _question_lead_atoms(q):
     note = (getattr(q, "mod_note", None) or "").strip()
     if note:
         mods.append(note)
-    if mods:
-        leads.append(Atom("say", MOD_LEAD_PREFIX + " " + "; ".join(mods)))
-    return leads
+    return mods
+
+
+def _lead_header(q):
+    """Только уникальный тип клетки на экран. Мягкие модификаторы — в комментарии ведущему."""
+    parts = []
+    qtype = getattr(q, "qtype", None) or "simple"
+    if qtype in TYPE_LEAD_LABELS:
+        parts.append("«" + TYPE_LEAD_LABELS[qtype] + "»")
+        if qtype in ("cat", "bagcat") and getattr(q, "secret_theme", None):
+            parts.append("Тема: " + str(q.secret_theme))
+    # НЕ пишем «Модификаторы: близкий ответ» в сценарий — это не для игроков
+    return "\n".join(parts)
+
+
+def _inject_header_into_atoms(q, atoms):
+    """Вшить заголовок типа/модификатора в начало первого text — так он точно первый в игре."""
+    from models import Atom
+    atoms = [a.copy() for a in (atoms or [])]
+    header = _lead_header(q)
+    if not header:
+        return atoms
+    # убрать старые служебные say
+    cleaned = []
+    for a in atoms:
+        if a.atype == "say":
+            val = (a.value or "").strip()
+            if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
+                continue
+            if val.startswith("«") and any(v in val for v in TYPE_LEAD_LABELS.values()):
+                continue
+        cleaned.append(a)
+    atoms = cleaned
+    # если первый text уже с заголовком — не дублировать
+    for a in atoms:
+        if a.atype in ("text", "say") and a.value:
+            v = a.value.lstrip()
+            if any(v.startswith("«" + lab) or v.startswith(lab) for lab in TYPE_LEAD_LABELS.values()):
+                return atoms
+            if v.startswith(MOD_LEAD_PREFIX):
+                return atoms
+            break
+    # вставить: предпочтительно в начало первого text; иначе новый text в начало
+    for i, a in enumerate(atoms):
+        if a.atype == "text":
+            body = (a.value or "").lstrip()
+            a.value = header + "\n\n" + body if body else header
+            return atoms
+    return [Atom("text", header)] + atoms
+
+
+def _question_lead_atoms(q):
+    """Больше не пишем отдельные say — заголовок вшит в text через _inject_header_into_atoms."""
+    return []
 
 
 def _strip_lead_atoms(atoms):
-    """Убрать с начала сценария наши служебные реплики при загрузке."""
+    """При загрузке убрать служебный заголовок из начала text/say."""
     atoms = list(atoms or [])
     while atoms:
         a = atoms[0]
-        if a.atype != "say":
+        if a.atype == "say":
+            val = (a.value or "").strip()
+            if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
+                atoms.pop(0)
+                continue
             break
-        val = (a.value or "").strip()
-        if val in TYPE_LEAD_LABELS.values() or val.startswith(MOD_LEAD_PREFIX):
-            atoms.pop(0)
-            continue
+        if a.atype == "text" and a.value:
+            lines = a.value.splitlines()
+            # снять ведущие строки-заголовки
+            while lines:
+                s = lines[0].strip()
+                if not s:
+                    lines.pop(0)
+                    continue
+                if s in TYPE_LEAD_LABELS.values() or (s.startswith("«") and s.endswith("»")):
+                    lines.pop(0)
+                    continue
+                if s.startswith("Тема:") or s.startswith(MOD_LEAD_PREFIX):
+                    lines.pop(0)
+                    continue
+                break
+            a.value = "\n".join(lines).lstrip("\n")
+            break
         break
     return atoms
 
@@ -224,22 +287,20 @@ def package_to_xml(pkg):
                             p.text = knows
 
                 sc = ET.SubElement(q_el, "{%s}scenario" % NS)
-                # Сначала тип и модификаторы — в игре покажутся до текста вопроса
-                for lead in _question_lead_atoms(q):
-                    _write_atom(sc, lead)
                 variants = getattr(q, "variants", None) or []
                 if variants and len(variants) > 1:
                     for vi, v in enumerate(variants):
                         label = (v.get("name") or ("Вариант %d" % (vi + 1))).strip()
                         _write_atom(sc, Atom("say", "[%s]" % label))
-                        atoms = v.get("atoms") or [Atom("text", "")]
+                        atoms = _inject_header_into_atoms(q, v.get("atoms") or [Atom("text", "")])
                         for atom in atoms:
                             _write_atom(sc, atom)
                 elif variants and len(variants) == 1:
-                    for atom in variants[0].get("atoms") or [Atom("text", "")]:
+                    atoms = _inject_header_into_atoms(q, variants[0].get("atoms") or [Atom("text", "")])
+                    for atom in atoms:
                         _write_atom(sc, atom)
                 else:
-                    atoms = q.atoms if q.atoms else [Atom("text", "")]
+                    atoms = _inject_header_into_atoms(q, q.atoms if q.atoms else [Atom("text", "")])
                     for atom in atoms:
                         _write_atom(sc, atom)
                 if q.answer_atoms:
