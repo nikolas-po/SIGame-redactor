@@ -321,32 +321,21 @@ def package_to_xml(pkg):
                             we = ET.SubElement(wrong, "{%s}answer" % NS)
                             we.text = str(w)[:500]
 
-                # комментарий + модификаторы для ведущего
-                cparts = []
-                if q.comment:
-                    cparts.append(str(q.comment))
-                mods = []
-                if getattr(q, "mod_partial", False):
-                    mods.append("близкий ответ ок")
-                if getattr(q, "mod_no_penalty", False):
-                    mods.append("без штрафа")
-                if getattr(q, "mod_host_choice", False):
-                    mods.append("выбор варианта ведущим")
-                if getattr(q, "mod_timer_sec", 0):
-                    mods.append("таймер %s с" % q.mod_timer_sec)
-                if getattr(q, "mod_note", ""):
-                    mods.append(str(q.mod_note))
-                if mods:
-                    cparts.append("Модификаторы: " + "; ".join(mods))
-                if variants and len(variants) > 1:
-                    cparts.append(
-                        "Варианты показа: "
-                        + ", ".join((v.get("name") or "?") for v in variants)
-                    )
-                if cparts:
+                # комментарий ведущему — только явный текст, без авто «Модификаторы: …»
+                comment = (q.comment or "").strip()
+                # вычистить старый автотекст
+                if comment:
+                    parts = [x.strip() for x in comment.split("|")]
+                    parts = [
+                        x for x in parts
+                        if x and not x.startswith("Модификаторы:")
+                        and x != "близкий ответ ок"
+                    ]
+                    comment = " | ".join(parts).strip(" |")
+                if comment:
                     qinfo = ET.SubElement(q_el, "{%s}info" % NS)
                     qc = ET.SubElement(qinfo, "{%s}comments" % NS)
-                    qc.text = " | ".join(cparts)[:2000]
+                    qc.text = comment[:2000]
 
     _indent(root)
     return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode")
