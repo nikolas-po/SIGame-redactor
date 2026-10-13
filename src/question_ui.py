@@ -10,19 +10,60 @@ from models import Atom
 
 
 def show_preview(parent, question):
+    """Предпросмотр: текст + HTML в браузере."""
+    import os
+    import webbrowser
+
     win = tk.Toplevel(parent)
     win.title("Как увидят игроки")
     win.geometry("560x520")
-    win.transient(parent)
-    txt = tk.Text(win, wrap=tk.WORD, font=("", 12), padx=12, pady=12)
-    txt.pack(fill=tk.BOTH, expand=True)
-    try:
-        body = question.preview_text()
-    except Exception:
-        body = ""
-    txt.insert("1.0", body)
+    frm = ttk.Frame(win, padding=10)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    qtype = getattr(question, "qtype", "simple") or "simple"
+    from constants import QUESTION_TYPES
+
+    type_name = dict(QUESTION_TYPES).get(qtype, qtype)
+    ttk.Label(frm, text="Тип: " + type_name, font=("", 11, "bold")).pack(anchor="w")
+
+    body = question.preview_text() if hasattr(question, "preview_text") else ""
+    txt = tk.Text(frm, wrap=tk.WORD, font=("", 12), height=12)
+    txt.pack(fill=tk.BOTH, expand=True, pady=6)
+    txt.insert("1.0", body or "(нет текста — смотрите HTML)")
     txt.config(state=tk.DISABLED)
-    ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=8)
+
+    atoms = list(getattr(question, "atoms", None) or [])
+    for v in getattr(question, "variants", None) or []:
+        atoms.extend(v.get("atoms") or [])
+    html_atoms = [a for a in atoms if getattr(a, "atype", "") == "html"]
+    if html_atoms:
+        hf = ttk.LabelFrame(frm, text="HTML — предпросмотр", padding=6)
+        hf.pack(fill=tk.X, pady=4)
+        for a in html_atoms:
+            row = ttk.Frame(hf)
+            row.pack(fill=tk.X, pady=2)
+            name = (a.value or "").lstrip("@")
+            ttk.Label(row, text=name or "html").pack(side=tk.LEFT)
+
+            def _open(atom=a, title=name):
+                path = getattr(atom, "local_path", None)
+                pkg = getattr(parent, "pkg", None)
+                if not path and pkg is not None:
+                    mf = pkg.media_files or {}
+                    path = mf.get(title) or mf.get(os.path.basename(title))
+                if path and os.path.isfile(path):
+                    webbrowser.open("file://" + os.path.abspath(path))
+                else:
+                    messagebox.showinfo(
+                        "HTML", "Файл не найден:\n" + str(title), parent=win
+                    )
+
+            ttk.Button(row, text="Открыть в браузере", command=_open).pack(side=tk.RIGHT)
+
+    ans = ", ".join(question.answers or [])
+    ttk.Label(frm, text="Ответ: " + (ans or "—"), wraplength=520).pack(anchor="w", pady=4)
+    ttk.Button(frm, text="Закрыть", command=win.destroy).pack(pady=6)
+
 
 
 class QuestionFormBuilder:
@@ -121,7 +162,7 @@ class QuestionFormBuilder:
         self.q_body.bind("<FocusOut>", lambda e: self._auto_apply())
 
         # медиа
-        mf = ttk.LabelFrame(self.form, text="Фото / звук / видео (по желанию)", padding=6)
+        mf = ttk.LabelFrame(self.form, text="Фото / звук / видео / HTML (по желанию)", padding=6)
         mf.pack(fill=tk.X, pady=4)
         self.widgets.append(mf)
         self.media_lb = tk.Listbox(mf, height=3, font=("", 11))
@@ -133,6 +174,7 @@ class QuestionFormBuilder:
             ("+ Фото", lambda: self._add_media("image")),
             ("+ Звук", lambda: self._add_media("voice")),
             ("+ Видео", lambda: self._add_media("video")),
+            ("+ HTML", lambda: self._add_media("html")),
             ("Удалить", self._del_media),
         ]:
             ttk.Button(mb, text=txt, command=cmd).pack(side=tk.LEFT, padx=2)
@@ -240,7 +282,7 @@ class QuestionFormBuilder:
             self.media_lb.insert(tk.END, a.display())
 
     def _add_media(self, atype):
-        labels = {"image": "Фото", "voice": "Звук", "video": "Видео"}
+        labels = {"image": "Фото", "voice": "Звук", "video": "Видео", "html": "HTML / мини-игра"}
         path = filedialog.askopenfilename(
             title=labels.get(atype, "Файл"),
             filetypes=[
@@ -260,6 +302,8 @@ class QuestionFormBuilder:
         self.app.pkg.media_files[fname] = path
         a = Atom(atype, fname)
         a.local_path = path
+        if atype == "html":
+            a.duration = 180  # секунд на экране (можно сменить в сценарии)
         self.media_atoms.append(a)
         self._refresh_media()
         self._auto_apply()
