@@ -69,13 +69,13 @@ TYPE_LEAD_LABELS = {
     "auction": "АУКЦИОН",
     "cat": "КОТ В МЕШКЕ",
     "bagcat": "КОТ В МЕШКЕ",
-    "sponsored": "БЕЗ РИСКА (×2)",
+    "sponsored": "×2",
 }
 TYPE_LEAD_HINTS = {
     "auction": "Игроки повышают ставку. Отвечает назвавший наибольшую.",
     "cat": "Выберите, кому передать вопрос (не себе). Затем ответит этот игрок.",
     "bagcat": "Можно оставить себе или передать другому.",
-    "sponsored": "За верный ответ — двойная стоимость. За ошибку очки не снимаются.",
+    "sponsored": "За верный ответ — двойная стоимость (×2). Штраф за ошибку — по правилам комнаты.",
 }
 MOD_LEAD_PREFIX = "Модификаторы:"
 
@@ -97,19 +97,8 @@ def _mod_phrases(q):
 
 
 def _type_intro_text(q):
-    """Первый экран: тип + тема + короткое пояснение. Без текста вопроса."""
-    qtype = getattr(q, "qtype", None) or "simple"
-    if qtype not in TYPE_LEAD_LABELS:
-        return ""
-    lines = ["«" + TYPE_LEAD_LABELS[qtype] + "»"]
-    if qtype in ("cat", "bagcat"):
-        theme = (getattr(q, "secret_theme", None) or "").strip()
-        if theme:
-            lines.append("Тема: " + theme)
-    hint = TYPE_LEAD_HINTS.get(qtype)
-    if hint:
-        lines.append(hint)
-    return "\n".join(lines)
+    """Не дублируем тип в тексте — SIGame сам показывает кот/аукцион/×2."""
+    return ""
 
 
 def _strip_injected_headers(text):
@@ -138,7 +127,7 @@ def _strip_injected_headers(text):
         if s.startswith("Игроки повышают") or s.startswith("Выберите, кому") or s.startswith("Можно оставить"):
             lines.pop(0)
             continue
-        if s.startswith("За верный ответ"):
+        if s.startswith("За верный ответ") or s.startswith("(Штраф"):
             lines.pop(0)
             continue
         break
@@ -356,16 +345,20 @@ def package_to_xml(pkg):
 
 def _write_atom(parent, atom):
     attrs = {"type": atom.atype or "text"}
-    if atom.duration:
-        attrs["time"] = str(_safe_int(atom.duration, 0, 0, 3600))
+    dur = getattr(atom, "duration", None)
+    if atom.atype == "html" and not dur:
+        dur = 120  # секунд на экран с калькулятором
+    if dur:
+        attrs["time"] = str(_safe_int(dur, 0, 0, 3600))
     a_el = ET.SubElement(parent, "{%s}atom" % NS, attrs)
     val = atom.value or ""
-    if atom.atype in ("image", "voice", "video"):
+    if atom.atype in ("image", "voice", "video", "html"):
         if val and not val.startswith("@") and not str(val).startswith("http"):
-            val = "@" + val
+            val = "@" + str(val).lstrip("@")
         a_el.text = val
     else:
         a_el.text = str(val)[:5000]
+
 
 
 def _indent(elem, level=0):
@@ -606,7 +599,7 @@ def load_siq(path):
         raise ValueError("Файл повреждён или это не .siq.")
 
     pkg = parse_siq_xml(xml_data, media_extract_dir=extract_dir)
-    for folder in ("Images", "Audio", "Video"):
+    for folder in ("Images", "Audio", "Video", "Html"):
         d = os.path.join(extract_dir, folder)
         if os.path.isdir(d):
             for fn in os.listdir(d):
@@ -657,5 +650,3 @@ def validate_package(pkg):
         warnings.append("Вопросов без текста и медиа: %d." % empty_q)
     if no_answer:
         warnings.append("Вопросов без правильного ответа: %d." % no_answer)
-
-    return errors, warnings
